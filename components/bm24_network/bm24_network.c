@@ -15,7 +15,6 @@
 #include "lwip/sockets.h"
 #include "mbedtls/base64.h"
 #include "bm24_dashboard_html.h"
-#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_ota_ops.h"
@@ -659,11 +658,7 @@ static bool start_http_portal(void)
 
 static bool start_setup_ap(void)
 {
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-    char ssid[33];
-    snprintf(ssid, sizeof(ssid), "BitMiner24-%02X%02X%02X",
-             mac[3], mac[4], mac[5]);
+    const char *ssid = BM24_SETUP_SSID;
 
     wifi_config_t ap = {0};
     strlcpy((char *)ap.ap.ssid, ssid, sizeof(ap.ap.ssid));

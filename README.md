@@ -39,7 +39,8 @@ Factory-Flash ab `0x0` loescht sie.
 
 ## Ersteinrichtung
 
-1. Mit `BitMiner24-<Chip-ID>` verbinden, Passwort `MineYourCoins`.
+1. Mit `NerdMinerAP` verbinden, Passwort `MineYourCoins` (oder den QR-Code
+   auf dem Display scannen).
 2. `http://192.168.4.1` oeffnen.
 3. WLAN, echte BTC-Adresse/Worker und Pool eintragen.
 
@@ -95,7 +96,7 @@ muss die Datei löschen, sonst wirkt die Änderung stillschweigend nicht.
 
 ### Erste Einrichtung am Gerät
 
-Ohne gespeicherte Konfiguration öffnet das Gerät ein WLAN `BitMiner24-XXXXXX`.
+Ohne gespeicherte Konfiguration öffnet das Gerät das WLAN `NerdMinerAP`.
 Verbinden, die Anmeldeseite öffnet sich von selbst (sonst `http://192.168.4.1`),
 eigenes WLAN aus der Liste wählen und die eigene BTC-Adresse eintragen. Die
 vorbelegte Adresse ist eine öffentliche Testadresse und muss ersetzt werden.
@@ -106,24 +107,23 @@ setzt auf Werkszustand zurück.
 
 ### Grafiken
 
-Die fünf Bildschirme liegen als RGB565-Felder in
-`components/bm24_media/bm24_media.c`, jeweils 320×170. Sie stammen aus der
-1.x-Firmware und tragen ihre Beschriftungen im Bild; die Werte werden
-darüber gezeichnet.
+Die fünf grafischen Informationsseiten sowie Start- und Einrichtungsscreen
+liegen als RGB565-Felder in `components/bm24_media/bm24_media.c`, jeweils
+320×170. Dazu gehört jetzt auch der Solo-Tracker auf Seite 5.
+Die nativ für das Display neu aufgebauten 320×170-Quelldateien liegen unter
+`assets/screens-320x170/`. Sie reduzieren redundante Kleininformationen und
+lassen die Kernwerte größer darstellen. Die Grafiken tragen ihre
+Beschriftungen im Bild; die Live-Werte werden darüber gezeichnet.
 
 Eine eigene Grafik einsetzen:
 
-1. PNG in 320×170 anlegen. Beschriftungen gehören ins Bild, die Kästchen
-   für die Werte bleiben leer.
-2. Nach RGB565 wandeln und das Feld in `bm24_media.c` ersetzen; der Name
-   muss zu `bm24_media.h` passen.
+1. SVG unter `assets/screens-320x170/source-svg/` in 320×170 anlegen.
+   Beschriftungen gehören ins Bild, die Kästchen für die Werte bleiben leer.
+2. Mit `source-svg/render.ps1` die PNGs erzeugen und danach mit
+   `embed-screens.ps1` als RGB565 in `bm24_media.c` einbetten.
 3. Die Koordinaten der Werte stehen in `components/bm24_ui/bm24_ui.c` bei
    der jeweiligen Seite als `frame->slot[n] = {x, y, Größe, rechtsbündig}`.
    `x` ist bei rechtsbündig die **rechte** Kante des Kästchens.
-
-**Offen und dankbar für Hilfe:** Die Solo-Tracker-Seite (Seite 5) hat noch
-keine Grafik und benutzt deshalb ein einfaches Textlayout. Sobald ein Bild
-vorliegt, bekommt sie Koordinaten wie die anderen vier.
 
 ### Zustand
 

@@ -16,13 +16,9 @@ Betroffen sind:
   portiert aus `src/ShaTests/nerdSHA256plus.cpp`. Basiert seinerseits auf
   der shaLib von Blockstream Jade. Die Urheberangabe steht unverändert im
   Dateikopf.
-- `components/bm24_media/` — die fünf Bildschirmgrafiken, übernommen aus
-  demselben Projekt.
-
-**Hinweis zu den Grafiken:** Sie tragen die Wortmarke „NerdMiner" im Bild.
-Für eine eigenständige Produktoptik sollten sie durch eigene Entwürfe
-ersetzt werden; die Markenfrage ist von der MIT-Lizenz des Codes nicht
-abgedeckt.
+**Hinweis zu den Grafiken:** Die aktuellen sieben 320×170-Layouts wurden für
+BitMiner24 neu aufgebaut. Sie tragen weiterhin die Wortmarke „NerdMiner" im
+Bild; die Markenfrage ist von der MIT-Lizenz des Codes nicht abgedeckt.
 
 ## Eigener Anteil
 

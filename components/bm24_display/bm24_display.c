@@ -456,8 +456,7 @@ bool bm24_display_start(void)
         return false;
     backlight_apply();
 
-    strlcpy(s_frame.line[0], "BITMINER24", sizeof(s_frame.line[0]));
-    strlcpy(s_frame.line[1], "START IDF 5.5", sizeof(s_frame.line[1]));
+    s_frame.background = bm24_img_init;
     if (xTaskCreatePinnedToCore(render_task, "bm24Lcd", 4096, NULL, 2,
                                 &s_task, 1) != pdPASS)
         return false;

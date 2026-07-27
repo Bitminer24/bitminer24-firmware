@@ -23,6 +23,7 @@ extern const uint16_t bm24_img_miner[BM24_IMG_PIXELS];    /* Seite 1        */
 extern const uint16_t bm24_img_clock[BM24_IMG_PIXELS];    /* Seite 2        */
 extern const uint16_t bm24_img_network[BM24_IMG_PIXELS];  /* Seite 3        */
 extern const uint16_t bm24_img_price[BM24_IMG_PIXELS];    /* Seite 4        */
+extern const uint16_t bm24_img_solo[BM24_IMG_PIXELS];     /* Seite 5        */
 
 #ifdef __cplusplus
 }

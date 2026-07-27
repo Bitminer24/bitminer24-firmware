@@ -11,6 +11,7 @@
 extern "C" {
 #endif
 
+#define BM24_SETUP_SSID     "NerdMinerAP"
 #define BM24_SETUP_PASSWORD "MineYourCoins"
 
 typedef struct {

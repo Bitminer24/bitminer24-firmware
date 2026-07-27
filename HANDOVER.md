@@ -10,7 +10,7 @@ liegen.
 
 Ersteinrichtung direkt am Handy oder Rechner:
 
-1. WLAN `BitMiner24-62499D`, Passwort `MineYourCoins`
+1. WLAN `NerdMinerAP`, Passwort `MineYourCoins` (oder QR-Code scannen)
 2. `http://192.168.4.1`
 3. eigenes WLAN und echte BTC-Adresse/Worker eintragen
 4. fuer `public-pool.io` zunaechst Port `3333`, TLS aus, Passwort `x`

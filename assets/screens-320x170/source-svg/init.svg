@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="170" viewBox="0 0 320 170">
+  <rect width="320" height="170" fill="#050607"/>
+  <path d="M0 0H320V26H150L140 21H0Z" fill="#0b0d0f"/>
+  <path d="M145 12H276L284 5H317" fill="none" stroke="#a95700" stroke-width="1"/>
+  <circle cx="317" cy="5" r="2" fill="#ff8a00"/>
+
+  <text x="8" y="20" font-family="Arial" font-size="18" font-weight="700" fill="#ff8a00">NERD</text>
+  <text x="59" y="20" font-family="Arial" font-size="18" font-weight="700" fill="#f4f5f6">MINER</text>
+  <text x="120" y="11" font-family="Arial" font-size="9" font-weight="700" fill="#ff8a00">2</text>
+  <text x="309" y="20" text-anchor="end" font-family="Arial" font-size="10" font-weight="700" fill="#ff8a00">START</text>
+
+  <text x="12" y="51" font-family="Arial" font-size="20" font-weight="700" fill="#f4f5f6">WLAN WIRD GESTARTET</text>
+  <text x="12" y="68" font-family="Arial" font-size="11" fill="#aeb3b8">Konfiguration und Verbindung werden geprüft</text>
+
+  <rect x="12" y="79" width="296" height="23" rx="4" fill="#0c0f11" stroke="#4a2a08"/>
+  <circle cx="27" cy="90.5" r="5" fill="#ff8a00"/>
+  <text x="42" y="95" font-family="Arial" font-size="11" font-weight="700" fill="#f4f5f6">KONFIGURATION LADEN</text>
+
+  <rect x="12" y="106" width="296" height="23" rx="4" fill="#0c0f11" stroke="#4a2a08"/>
+  <circle cx="27" cy="117.5" r="5" fill="#ff8a00"/>
+  <text x="42" y="122" font-family="Arial" font-size="11" font-weight="700" fill="#f4f5f6">MIT WLAN VERBINDEN</text>
+
+  <rect x="12" y="133" width="296" height="23" rx="4" fill="#0c0f11" stroke="#4a2a08"/>
+  <circle cx="27" cy="144.5" r="5" fill="#ff8a00"/>
+  <text x="42" y="149" font-family="Arial" font-size="11" font-weight="700" fill="#f4f5f6">MINER STARTEN</text>
+
+  <text x="307" y="168" text-anchor="end" font-family="Arial" font-size="9" fill="#aeb3b8">bitminer24.de</text>
+</svg>
