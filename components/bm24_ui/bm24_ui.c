@@ -49,6 +49,13 @@ static uint32_t now_ms(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+/* Nackter Zahlenwert; die Einheit KH/S steht auf den Grafiken bereits im
+   Bild und wuerde sonst doppelt erscheinen. */
+static void format_rate_bare(double khs, char *out, size_t capacity)
+{
+    snprintf(out, capacity, "%.1f", khs);
+}
+
 static void format_rate(double khs, char *out, size_t capacity)
 {
     if (khs >= 1000.0)
@@ -109,42 +116,63 @@ static void format_clock(bool synced, char *out, size_t capacity)
    Beschriftungen im Bild, hier stehen nur noch die Werte an der Stelle,
    an der im Bild ihr Kaestchen ist. x ist bei right = true die rechte
    Kante des Kaestchens. */
+/* Felder der Grafik bm24_MinerScreen, von oben nach unten:
+   links die grosse Hashrate und darunter die Gesamtzahl der Hashes,
+   rechts sieben Kaestchen (Block, Temperatur, Schwierigkeit, beste
+   Schwierigkeit, Anteile, gueltige Bloecke, Laufzeit). */
 static void miner_page(const bm24_ui_state *state,
                        bm24_display_frame *frame)
 {
     frame->background = bm24_img_miner;
-    frame->slot_count = 6;
-
-    /* grosse Hashrate links, darunter die Gesamtzahl */
-    frame->slot[0] = (bm24_display_slot){126, 84, 3, true};
-    format_rate(state->hw_khs + state->sw_khs, frame->line[0],
-                sizeof(frame->line[0]));
-
-    frame->slot[1] = (bm24_display_slot){150, 141, 2, true};
-    snprintf(frame->line[1], sizeof(frame->line[1]), "%.1f C",
-             state->temperature_c);
-
-    /* rechte Spalte: gleiche Reihenfolge wie in 1.x */
-    frame->slot[2] = (bm24_display_slot){313, 33, 2, true};
-    snprintf(frame->line[2], sizeof(frame->line[2]), "%" PRIu32,
-             state->pool.active_job_tag);
+    frame->slot_count = 9;
 
     bm24_metrics_snapshot metrics;
     bm24_metrics_get(&metrics);
+
+    frame->slot[0] = (bm24_display_slot){250, 84, 4, true};
+    format_rate_bare(state->hw_khs + state->sw_khs, frame->line[0],
+                     sizeof(frame->line[0]));
+
+    frame->slot[1] = (bm24_display_slot){150, 141, 2, true};
+    bm24_thousands((double)(state->miner.total_hw_hashes +
+                            state->miner.total_sw_hashes) / 1000.0,
+                   frame->line[1], sizeof(frame->line[1]));
+
+    frame->slot[2] = (bm24_display_slot){313, 33, 2, true};
+    if (metrics.chain_valid)
+        bm24_thousands(metrics.block_height, frame->line[2],
+                       sizeof(frame->line[2]));
+    else
+        strlcpy(frame->line[2], "-", sizeof(frame->line[2]));
+
+    frame->slot[3] = (bm24_display_slot){313, 48, 2, true};
+    snprintf(frame->line[3], sizeof(frame->line[3]), "%.0f C",
+             state->temperature_c);
+
+    frame->slot[4] = (bm24_display_slot){313, 63, 2, true};
+    format_difficulty(state->pool.difficulty, frame->line[4],
+                      sizeof(frame->line[4]));
+
     double best = state->pool.best_difficulty;
     if (metrics.pool_stats_valid && metrics.pool_best_difficulty > best)
         best = metrics.pool_best_difficulty;
+    frame->slot[5] = (bm24_display_slot){313, 78, 2, true};
+    format_difficulty(best, frame->line[5], sizeof(frame->line[5]));
 
-    frame->slot[3] = (bm24_display_slot){313, 78, 2, true};
-    format_difficulty(best, frame->line[3], sizeof(frame->line[3]));
-
-    frame->slot[4] = (bm24_display_slot){313, 93, 2, true};
-    snprintf(frame->line[4], sizeof(frame->line[4]), "%" PRIu64,
+    frame->slot[6] = (bm24_display_slot){313, 93, 2, true};
+    snprintf(frame->line[6], sizeof(frame->line[6]), "%" PRIu64,
              state->pool.accepted);
 
-    frame->slot[5] = (bm24_display_slot){313, 123, 2, true};
-    format_uptime(state->uptime_seconds, frame->line[5],
-                  sizeof(frame->line[5]));
+    /* Gueltige Bloecke: Treffer, die das Netzwerkziel erreichen. Der Pool
+       bestaetigt das nicht getrennt, deshalb steht hier bis auf Weiteres
+       die Zahl der abgelehnten Anteile NICHT — lieber ein ehrlicher
+       Platzhalter als eine Zahl, die etwas anderes bedeutet. */
+    frame->slot[7] = (bm24_display_slot){313, 108, 2, true};
+    strlcpy(frame->line[7], "0", sizeof(frame->line[7]));
+
+    frame->slot[8] = (bm24_display_slot){313, 123, 2, true};
+    format_uptime(state->uptime_seconds, frame->line[8],
+                  sizeof(frame->line[8]));
 }
 
 static void clock_page(const bm24_ui_state *state,
@@ -160,8 +188,8 @@ static void clock_page(const bm24_ui_state *state,
 
     frame->slot[1] = (bm24_display_slot){306, 68, 2, true};
     if (metrics->chain_valid)
-        snprintf(frame->line[1], sizeof(frame->line[1]), "%" PRIu32,
-                 metrics->block_height);
+        bm24_thousands(metrics->block_height, frame->line[1],
+                       sizeof(frame->line[1]));
     else
         strlcpy(frame->line[1], "-", sizeof(frame->line[1]));
 
@@ -173,37 +201,51 @@ static void clock_page(const bm24_ui_state *state,
         strlcpy(frame->line[2], "-", sizeof(frame->line[2]));
 
     frame->slot[3] = (bm24_display_slot){140, 142, 2, true};
-    format_rate(state->hw_khs + state->sw_khs, frame->line[3],
-                sizeof(frame->line[3]));
+    format_rate_bare(state->hw_khs + state->sw_khs, frame->line[3],
+                     sizeof(frame->line[3]));
 }
 
+/* Felder der Grafik bm24_GlobalHashScreen: links Uhrzeit, Bloecke bis
+   zum Halving und globale Hashrate, rechts Block, Preis, Medium Fee und
+   Schwierigkeit. */
 static void network_page(const bm24_metrics_snapshot *metrics,
                          bm24_display_frame *frame)
 {
     frame->background = bm24_img_network;
-    frame->slot_count = 5;
+    frame->slot_count = 7;
 
-    frame->slot[0] = (bm24_display_slot){306, 56, 2, true};
+    frame->slot[0] = (bm24_display_slot){142, 56, 2, true};
+    format_clock(metrics->time_synced, frame->line[0],
+                 sizeof(frame->line[0]));
+
+    frame->slot[1] = (bm24_display_slot){306, 56, 2, true};
     if (metrics->chain_valid)
-        snprintf(frame->line[0], sizeof(frame->line[0]), "%" PRIu32,
-                 metrics->block_height);
+        bm24_thousands(metrics->block_height, frame->line[1],
+                       sizeof(frame->line[1]));
     else
-        strlcpy(frame->line[0], "-", sizeof(frame->line[0]));
+        strlcpy(frame->line[1], "-", sizeof(frame->line[1]));
 
-    frame->slot[1] = (bm24_display_slot){142, 90, 2, true};
-    snprintf(frame->line[1], sizeof(frame->line[1]), "%" PRIu32,
-             metrics->retarget_blocks);
+    frame->slot[2] = (bm24_display_slot){142, 90, 2, true};
+    bm24_thousands(metrics->halving_blocks, frame->line[2],
+                   sizeof(frame->line[2]));
 
-    frame->slot[2] = (bm24_display_slot){128, 134, 2, true};
-    snprintf(frame->line[2], sizeof(frame->line[2]), "%.0f",
+    frame->slot[3] = (bm24_display_slot){306, 90, 2, true};
+    if (metrics->price_valid)
+        bm24_thousands(metrics->btc_usd, frame->line[3],
+                       sizeof(frame->line[3]));
+    else
+        strlcpy(frame->line[3], "-", sizeof(frame->line[3]));
+
+    frame->slot[4] = (bm24_display_slot){128, 134, 2, true};
+    snprintf(frame->line[4], sizeof(frame->line[4]), "%.0f",
              metrics->global_hash_eh);
 
-    frame->slot[3] = (bm24_display_slot){282, 116, 2, true};
-    snprintf(frame->line[3], sizeof(frame->line[3]), "%" PRIu32,
+    frame->slot[5] = (bm24_display_slot){282, 116, 2, true};
+    snprintf(frame->line[5], sizeof(frame->line[5]), "%" PRIu32,
              metrics->half_hour_fee);
 
-    frame->slot[4] = (bm24_display_slot){306, 142, 2, true};
-    snprintf(frame->line[4], sizeof(frame->line[4]), "%.0fT",
+    frame->slot[6] = (bm24_display_slot){306, 142, 2, true};
+    snprintf(frame->line[6], sizeof(frame->line[6]), "%.0fT",
              metrics->network_difficulty_t);
 }
 
@@ -222,13 +264,13 @@ static void price_page(const bm24_ui_state *state,
         strlcpy(frame->line[0], "-", sizeof(frame->line[0]));
 
     frame->slot[1] = (bm24_display_slot){90, 144, 2, true};
-    format_rate(state->hw_khs + state->sw_khs, frame->line[1],
-                sizeof(frame->line[1]));
+    format_rate_bare(state->hw_khs + state->sw_khs, frame->line[1],
+                     sizeof(frame->line[1]));
 
     frame->slot[2] = (bm24_display_slot){198, 144, 2, true};
     if (metrics->chain_valid)
-        snprintf(frame->line[2], sizeof(frame->line[2]), "%" PRIu32,
-                 metrics->block_height);
+        bm24_thousands(metrics->block_height, frame->line[2],
+                       sizeof(frame->line[2]));
     else
         strlcpy(frame->line[2], "-", sizeof(frame->line[2]));
 

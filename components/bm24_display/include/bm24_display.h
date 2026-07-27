@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define BM24_DISPLAY_LINES 6
+#define BM24_DISPLAY_LINES 10
 #define BM24_DISPLAY_LINE_MAX 47
 
 typedef enum {
