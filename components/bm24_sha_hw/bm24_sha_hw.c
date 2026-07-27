@@ -145,8 +145,9 @@ static void header_tail3(const uint8_t header80[80], uint32_t tail3[3])
     memcpy(tail3, header80 + 64, 12);
 }
 
-bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
-                                uint32_t nonce_start, uint32_t count)
+bm24_hw_result bm24_sha_hw_scan_candidates(
+    const uint8_t header80[80], uint32_t nonce_start, uint32_t count,
+    bm24_hw_candidate_cb callback, void *context)
 {
     bm24_hw_result r = {0};
 
@@ -190,14 +191,26 @@ bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
             patched[78] = (uint8_t)(n >> 16);
             patched[79] = (uint8_t)(n >> 24);
             bm24_double_sha(patched, 80, want);
-            if (memcmp(want, got, 32) == 0) r.candidates++;
-            else                            r.mismatches++;
+            if (memcmp(want, got, 32) == 0) {
+                r.candidates++;
+                if (callback)
+                    callback(n, got, context);
+            } else {
+                r.mismatches++;
+            }
         }
 
         done += chunk;
     }
     r.hashes = done;
     return r;
+}
+
+bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
+                                uint32_t nonce_start, uint32_t count)
+{
+    return bm24_sha_hw_scan_candidates(header80, nonce_start, count,
+                                       NULL, NULL);
 }
 
 bool bm24_sha_hw_selftest(int n)

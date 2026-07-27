@@ -23,6 +23,10 @@ typedef struct {
     uint32_t mismatches;    /* HW != Referenz — muss immer 0 sein         */
 } bm24_hw_result;
 
+typedef void (*bm24_hw_candidate_cb)(uint32_t nonce,
+                                     const uint8_t hash[32],
+                                     void *context);
+
 /* Boot-Selbsttest: n Zufallsheader komplett gegen die bm24_sha-Referenz.
    false => HW-Pfad nicht benutzen. Gleiche Disziplin wie 1.x (64/64). */
 bool bm24_sha_hw_selftest(int n);
@@ -32,6 +36,12 @@ bool bm24_sha_hw_selftest(int n);
    aus 1.x: nichts verlaesst den Miner unverifiziert). */
 bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
                                 uint32_t nonce_start, uint32_t count);
+
+/* Wie bm24_sha_hw_scan(), meldet aber jeden bereits referenzverifizierten
+   16-Bit-Kandidaten ausserhalb der SHA-Sperre an den Aufrufer. */
+bm24_hw_result bm24_sha_hw_scan_candidates(
+    const uint8_t header80[80], uint32_t nonce_start, uint32_t count,
+    bm24_hw_candidate_cb callback, void *context);
 
 #ifdef __cplusplus
 }

@@ -76,3 +76,43 @@ Produkt-Abnahmewert. Im echten Miner kommen WiFi/Stratum/UI und eine
 temperaturbasierte SW-Lastregelung hinzu. Ziel bleibt: 300+ kH/s ohne
 thermisch unkontrollierte Optimierung. SHA-DMA bleibt ein spaeteres,
 zeitlich begrenztes Experiment und ist keine Voraussetzung mehr fuer 2.0.
+
+## 27.07.2026 — Nativer Job-/Miner-Pfad mit smarter SW-Dosierung
+
+Der Messheader wird nicht mehr direkt im Benchmark erzeugt. Er durchlaeuft
+jetzt den spaeteren Produktpfad:
+
+```
+mining.notify (IDF-cJSON)
+  -> Coinbase + Merkle + nBits/Target
+  -> atomarer Jobwechsel
+  -> HW- und SW-Worker
+  -> Referenzpruefung
+  -> Share-Queue mit Difficulty/Netzwerkziel
+```
+
+Messung nach Race-Fix, 55 Sekunden seriell erfasst; die ersten drei
+Anlaufwerte wurden aus dem Mittel entfernt:
+
+| Messung | Ergebnis |
+|---|---|
+| stationaere Samples | 52 |
+| mittlere Gesamtleistung | **300,26 kH/s** |
+| typische 1-s-Werte | 299,0 bis 303,1 kH/s |
+| HW-Werk | 270,3 kH/s |
+| SW-Duty | 85-90 % |
+| mittlere Temperatur | **60,7 °C** |
+| HW-/SW-Kandidaten am Laufende | 218 / 35 |
+| share-faehige Treffer | 21 |
+| Abweichungen | **0** |
+
+Die schwankenden 1-s-SW-Werte 28,7/32,8 kH/s sind Chunkgrenzen der
+Duty-Regelung, kein instabiler Kernel. Ueber das Messfenster liegt die
+Gesamtleistung knapp ueber 300 kH/s.
+
+Thermische Einordnung: 300+ ist ohne Uebertaktung erreicht, aber die native
+IDF-5.5-Sensormessung liegt mit 60-61 °C ueber den 52-55 °C der
+1.x-Referenz. Ab 60 °C reduziert die Regelung nur den thermisch
+ineffizienteren SW-Anteil; ab 63 °C stoppt sie ihn bis unter 59 °C. Das
+effiziente Hardware-Werk bleibt bei 240 MHz. Der finale Grenzwert wird erst
+mit WiFi, Display und Gehaeuse im Soak-Test festgelegt.

@@ -26,9 +26,9 @@ v2 liegt außerhalb des Workspace, weil der IDF-Build Pfade mit Leerzeichen able
 
 - ESP-IDF 5.5.0 / GCC 14.2, bootet auf dem Gerät
 - A/B-OTA-Partitionen aktiv, App ab `0x10000`, Boot-Rollback an
-- **26/26 Host-Tests grün** (`pio test -e native`): Formatierung, SHA-Referenz
+- **32/32 Host-Tests grün** (`pio test -e native`): Formatierung, SHA-Referenz
   gegen NIST + Genesis, Midstate-Äquivalenz, SW-Kernel-Filter über 800k
-  Nonces sowie native Stratum-Jobaufbereitung
+  Nonces, native Stratum-Jobaufbereitung und JSON-RPC-Drahtformat
 - CI-Workflow (Host-Tests + Firmware-Build) geschrieben, noch nicht gepusht
 - Host-Tests brauchen MinGW-GCC (per winget installiert), Pfad:
   `~/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT*/mingw64/bin`
@@ -85,14 +85,41 @@ python -m platformio run -e bm24-v2 -t upload --upload-port COM21
 
 Die Erwartungswerte im Host-Test wurden unabhaengig mit Python `hashlib`
 erzeugt. Dazu kommen Genesis-Hash gegen diff-1-Target und Fehlerfaelle fuer
-Hex, extranonce2 und compact target. Stand: 26/26 Tests gruen.
+Hex, extranonce2 und compact target.
+
+`components/bm24_stratum` ersetzt Arduino-`String`, `WiFiClient` und
+ArduinoJson an der Protokollgrenze:
+
+- begrenzte, besitzende Jobstrukturen
+- sichere JSON-RPC-Writer mit Escaping und Fail-closed-Puffern
+- Nonce immer achtstellig (1.x liess fuehrende Nullen weg)
+- IDF-cJSON fuer notify, set_difficulty, set_extranonce und Antworten
+
+`components/bm24_miner` ist der echte native Rechenkern:
+
+- atomarer Jobwechsel; Race zwischen Generation und Midstate geschlossen
+- getrennte Startbereiche fuer HW-/SW-Nonces
+- jeder HW- und SW-Kandidat gegen die portable Referenz
+- nur verifizierte Shares gelangen in die Queue
+- 8192er-HW-Chunks und 20-s-Rueckfalltuer fuer TLS-Netzfenster
+- SW-Duty 0-100 %, das effizientere HW-Werk wird thermisch nicht gedrosselt
+
+Geraetelauf ueber den kompletten notify->Share-Pfad: 52 stationaere
+1-s-Samples, **300,26 kH/s im Mittel**, 60,7 °C, 218/35 Kandidaten,
+21 share-faehige Treffer, **0 Abweichungen**. RAM 6,2 %, Flash 8,1 %.
+Stand: 32/32 Host-Tests gruen.
 
 ### Naechster Produkt-Schritt
 
-Der aktuelle v2-Build ist weiterhin ein reproduzierbarer Pruefstand, noch
-kein Miner. Jetzt den cJSON-Stratum-Parser und den Socket-/Reconnect-Task
-auf `bm24_work` setzen, danach WiFi/NVS/UI. Den schnellen Registerpfad dabei
-unveraendert als abgenommene Basis behandeln.
+Der aktuelle v2-Build ist ein echter Miner-Kern, aber mangels
+WiFi/NVS/Pool-Socket noch mit festem `mining.notify`-Vektor und somit kein
+Produktminer. Als Naechstes:
+
+1. versionierte NVS-Konfiguration + WiFi-Provisioning,
+2. Socket-/Reconnect-Task, der `bm24_stratum` mit `bm24_miner` verbindet,
+3. danach UI und OTA-Transport,
+4. abschliessend Temperaturgrenze mit WiFi, Display und Gehaeuse im
+   mehrstuendigen Soak festlegen.
 
 ### Quellen, die schon geprüft sind
 
