@@ -2,6 +2,7 @@
 #define BM24_DISPLAY_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,6 +19,9 @@ typedef enum {
 
 typedef struct {
     bm24_display_style style;
+    /* Optionale Hintergrundgrafik (320x170 RGB565, im Flash). NULL laesst
+       es bei der einfarbigen Flaeche. Siehe bm24_media. */
+    const uint16_t *background;
     char line[BM24_DISPLAY_LINES][BM24_DISPLAY_LINE_MAX + 1];
 } bm24_display_frame;
 

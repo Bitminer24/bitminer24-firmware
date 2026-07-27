@@ -8,6 +8,8 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_lcd_panel_io.h"
+
+#include "bm24_media.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_log.h"
@@ -101,6 +103,7 @@ static SemaphoreHandle_t s_tx_done;
 static SemaphoreHandle_t s_frame_lock;
 static SemaphoreHandle_t s_panel_lock;
 static uint16_t s_pixels[LCD_WIDTH * LCD_BAND_HEIGHT];
+static const uint16_t *s_background;   /* aktuelle Hintergrundgrafik, im Flash */
 static bm24_display_frame s_frame;
 static TaskHandle_t s_task;
 static bool s_backlight_enabled = true;
@@ -193,6 +196,21 @@ static void fill(uint16_t color, size_t pixels)
         s_pixels[i] = color;
 }
 
+/* Zeilenband aus der Hintergrundgrafik in den Sendepuffer holen. Ohne
+   gesetztes Bild bleibt es bei der bisherigen Vollfarbe. Damit steht die
+   1.x-Optik wieder hinter den Werten, ohne dass ein kompletter
+   Bildspeicher im RAM gehalten werden muss: es liegt immer nur ein Band
+   von LCD_BAND_HEIGHT Zeilen im Speicher, das Bild selbst bleibt im Flash. */
+static void fill_background(int y, int height)
+{
+    if (!s_background) {
+        fill(COLOR_BG, (size_t)LCD_WIDTH * height);
+        return;
+    }
+    memcpy(s_pixels, s_background + (size_t)y * LCD_WIDTH,
+           (size_t)LCD_WIDTH * height * sizeof(uint16_t));
+}
+
 static bool push_band(int y, int height)
 {
     if (esp_lcd_panel_draw_bitmap(s_panel, 0, y, LCD_WIDTH, y + height,
@@ -207,7 +225,7 @@ static void clear_screen(void)
         int height = LCD_HEIGHT - y;
         if (height > LCD_BAND_HEIGHT)
             height = LCD_BAND_HEIGHT;
-        fill(COLOR_BG, (size_t)LCD_WIDTH * height);
+        fill_background(y, height);
         if (!push_band(y, height))
             return;
     }
@@ -221,7 +239,7 @@ static void draw_text(int y, const char *text, uint8_t scale,
     int height = 7 * scale;
     if (height > LCD_BAND_HEIGHT || y < 0 || y + height > LCD_HEIGHT)
         return;
-    fill(COLOR_BG, (size_t)LCD_WIDTH * height);
+    fill_background(y, height);
 
     int x = 3;
     for (const char *p = text; *p && x + 5 * scale <= LCD_WIDTH; ++p) {
@@ -257,6 +275,7 @@ static void render_task(void *arg)
 
         if (xSemaphoreTake(s_panel_lock, pdMS_TO_TICKS(500)) != pdTRUE)
             continue;
+        s_background = frame.background;
         clear_screen();
         if (frame.style == BM24_DISPLAY_STYLE_BIG_VALUE) {
             draw_text(4, frame.line[0], 2, COLOR_ORANGE);
@@ -392,6 +411,7 @@ void bm24_display_set(const bm24_display_frame *frame)
 void bm24_display_setup(const char *ssid, const char *password)
 {
     bm24_display_frame frame = {0};
+    frame.background = bm24_img_setup;   /* Setup-Grafik wie in 1.x */
     strlcpy(frame.line[0], "SETUP", sizeof(frame.line[0]));
     strlcpy(frame.line[1], "WLAN:", sizeof(frame.line[1]));
     strlcpy(frame.line[2], ssid ? ssid : "BITMINER24",

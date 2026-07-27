@@ -1,5 +1,7 @@
 #include "bm24_ui.h"
 
+#include "bm24_media.h"
+
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
@@ -99,6 +101,7 @@ static void miner_page(const bm24_ui_state *state,
                        bm24_display_frame *frame)
 {
     frame->style = BM24_DISPLAY_STYLE_BIG_VALUE;
+    frame->background = bm24_img_miner;
     strlcpy(frame->line[0], "MINER 1/5", sizeof(frame->line[0]));
     format_rate(state->hw_khs + state->sw_khs, frame->line[1],
                 sizeof(frame->line[1]));
@@ -125,6 +128,7 @@ static void clock_page(const bm24_ui_state *state,
                        bm24_display_frame *frame)
 {
     frame->style = BM24_DISPLAY_STYLE_BIG_VALUE;
+    frame->background = bm24_img_clock;
     strlcpy(frame->line[0], "UHR / BLOCK 2/5", sizeof(frame->line[0]));
     format_clock(metrics->time_synced, frame->line[1],
                  sizeof(frame->line[1]));
@@ -149,6 +153,7 @@ static void network_page(const bm24_metrics_snapshot *metrics,
                          bm24_display_frame *frame)
 {
     frame->style = BM24_DISPLAY_STYLE_DASHBOARD;
+    frame->background = bm24_img_network;
     strlcpy(frame->line[0], "BITCOIN NETZ 3/5", sizeof(frame->line[0]));
     char block[24] = "-";
     char halving[24] = "-";
@@ -187,6 +192,7 @@ static void price_page(const bm24_ui_state *state,
                        bm24_display_frame *frame)
 {
     frame->style = BM24_DISPLAY_STYLE_BIG_VALUE;
+    frame->background = bm24_img_price;
     strlcpy(frame->line[0], "BITCOIN PREIS 4/5", sizeof(frame->line[0]));
     char price[24] = "-";
     char block[24] = "-";
@@ -208,6 +214,9 @@ static void price_page(const bm24_ui_state *state,
 static void solo_page(const bm24_metrics_snapshot *metrics,
                       bm24_display_frame *frame)
 {
+    /* Fuer den Solo-Tracker gibt es noch keine eigene Grafik; bis sie
+       vorliegt bleibt die Seite bewusst ohne Hintergrund statt ein
+       thematisch falsches Bild zu zeigen. */
     frame->style = BM24_DISPLAY_STYLE_DASHBOARD;
     strlcpy(frame->line[0], "SOLO TRACKER 5/5", sizeof(frame->line[0]));
     if (!metrics->solo_valid) {
