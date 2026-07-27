@@ -433,7 +433,17 @@ static void pool_task(void *arg)
 {
     (void)arg;
     uint32_t failures = 0;
+    uint32_t low_water = UINT32_MAX;
     for (;;) {
+        /* Kleinsten je gesehenen Stapelrest melden, wenn er neu unterboten
+           wird. So faellt eine schrumpfende Reserve auf, bevor sie zum
+           Ueberlauf wird. */
+        uint32_t free_stack = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
+        if (free_stack < low_water) {
+            low_water = free_stack;
+            ESP_LOGI(TAG, "Pool-Task: kleinster Stapelrest %" PRIu32 " Byte",
+                     low_water);
+        }
         if (!bm24_network_wait_connected(10000)) {
             bm24_miner_clear_job();
             continue;
@@ -484,7 +494,12 @@ bool bm24_pool_start(const bm24_config *config)
     memset(&s_stats, 0, sizeof(s_stats));
     s_stats.difficulty = BM24_DEFAULT_DIFFICULTY;
     BaseType_t ok = xTaskCreatePinnedToCore(
-        pool_task, "bm24Pool", 16384, NULL, 4, &s_task, 1);
+        /* 16 KB reichten nicht: bm24_work_build legt allein 1 KB Coinbase
+           auf den Stapel, dazu kommen JSON-Parser und der TLS-Unterbau.
+           Das Ergebnis war ein Stapelueberlauf, sobald der erste echte Job
+           eintraf — also genau nach der Einrichtung, nicht im Leerlauf.
+           Der Rest wird jetzt gemeldet, damit die Reserve messbar bleibt. */
+        pool_task, "bm24Pool", 28672, NULL, 4, &s_task, 1);
     return ok == pdPASS;
 }
 
