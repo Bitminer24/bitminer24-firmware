@@ -136,3 +136,40 @@ Hintergrundmetriken fuer Preis/Netz/Solo und getrennte TLS-Zeitfenster.
 Buildstand: 80.968 Byte RAM (24,7 %) und 1.103.997 Byte im App-Slot
 (35,1 %). Die Informationsabrufe bleiben bis zur Provisionierung
 hardwareseitig ungetestet.
+
+## 27.07.2026 — Compiler- und Flash-Einstellungen: negatives Ergebnis
+
+Anlass: Der Build lief unbemerkt mit `-Og` und im DIO-Flashmodus. Die
+Speed-Doku von Espressif nennt fuer QIO gegenueber DIO nahezu doppelte
+Ladegeschwindigkeit von Code aus dem Flash, und `-O2` statt `-Og` ist der
+uebliche erste Griff.
+
+Ursache des unbemerkten Zustands: PlatformIO erzeugt `sdkconfig.bm24-v2`
+genau einmal und liest `sdkconfig.defaults` danach nie wieder. Aenderungen
+an den Vorgaben wirken erst, wenn die Datei geloescht wird. Genau daran
+war eine frueher gesetzte Optimierungsstufe stillschweigend gescheitert.
+`tools/measure.sh` loescht sie deshalb vor jedem Lauf.
+
+Je 150 s im laufenden Betrieb, gleiche Auswertung:
+
+| Variante | Median | Mittel | Einbrueche | Temp |
+|---|---|---|---|---|
+| Ausgangsstand `-Og`, DIO | 299,0 | 291,1 | — | 53-56 °C |
+| A: `-O2`, DIO | 303,1 | 287,4 | 4,2 % | 51-55 °C |
+| B: `-O2` + QIO | 303,1 | 288,2 | 4,8 % | 51-55 °C |
+| C: `-Os` + QIO | 303,1 | 288,3 | 4,2 % | 51-55 °C |
+
+**Ergebnis: kein messbarer Unterschied.** Der Median steigt um vier
+Einheiten, die Mittelwerte liegen innerhalb eines Kilohashes beieinander,
+also im Rauschen. Zwischen `-O2` und `-Os` ist ebenfalls nichts zu sehen.
+
+Erklaerung, und sie war vorhersagbar: Der Hot-Loop liegt im IRAM und wird
+vom Peripheriebus zum SHA-Werk begrenzt, nicht vom Befehlsnachschub aus
+dem Flash. Compiler- und Flash-Einstellungen koennen daran nichts aendern.
+
+Behalten wird trotzdem `-Os` + QIO: der Binaerstand faellt von 52,8 % auf
+50,3 % des App-Bereichs, der Start wird kuerzer, und Nachteile sind keine
+gemessen worden.
+
+Bleibende Erkenntnis: Wer hier mehr Leistung sucht, muss an das SHA-Werk
+(DMA-Modus), nicht an die Uebersetzung.
