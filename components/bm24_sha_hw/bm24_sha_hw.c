@@ -121,14 +121,22 @@ static inline void hw_begin(void)
     ll_zero_const_text();
 }
 
-static void words_to_bytes(const uint32_t w[8], uint8_t out[32])
+/* Die H-Register liefern jedes SHA-Wort byteverdreht als CPU-u32. Das ist
+   kein zusaetzliches Ausgabeformat: im little-endian Speicher stehen damit
+   bereits exakt die 32 Digest-Bytes in Netzwerkreihenfolge. */
+static void digest_regs_to_bytes(const uint32_t w[8], uint8_t out[32])
 {
-    for (int i = 0; i < 8; ++i) {
-        out[i * 4 + 0] = (uint8_t)(w[i] >> 24);
-        out[i * 4 + 1] = (uint8_t)(w[i] >> 16);
-        out[i * 4 + 2] = (uint8_t)(w[i] >> 8);
-        out[i * 4 + 3] = (uint8_t)w[i];
-    }
+    memcpy(out, w, 32);
+}
+
+/* bm24_sha_midstate() liefert die FIPS-Werte als normale CPU-u32. Das
+   SHA-Werk erwartet in H dagegen dasselbe Registerlayout, das es beim Lesen
+   liefert: jedes Wort byteverdreht. Einmal pro Job vorbereiten; niemals im
+   Nonce-Hot-Loop drehen. */
+static void midstate_to_digest_regs(const uint32_t state[8], uint32_t regs[8])
+{
+    for (int i = 0; i < 8; ++i)
+        regs[i] = __builtin_bswap32(state[i]);
 }
 
 /* Header-Bytes 64..75 als rohe Woerter, ohne Konvertierung (siehe oben) */
@@ -142,7 +150,7 @@ bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
 {
     bm24_hw_result r = {0};
 
-    uint32_t mid[8], tail3[3], hw[8];
+    uint32_t mid[8], mid_regs[8], tail3[3], hw[8];
     uint8_t  patched[80], want[32], got[32];
 
     /* Treffer werden waehrend des Abschnitts nur gemerkt und erst nach dem
@@ -152,6 +160,7 @@ bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
     uint32_t hit_words[16][8];
 
     bm24_sha_midstate(header80, mid);
+    midstate_to_digest_regs(mid, mid_regs);
     header_tail3(header80, tail3);
     memcpy(patched, header80, 80);
 
@@ -164,7 +173,7 @@ bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
         hw_begin();
         for (uint32_t i = 0; i < chunk; ++i) {
             uint32_t nonce = nonce_start + done + i;
-            hw_hash_core(mid, tail3, nonce);
+            hw_hash_core(mid_regs, tail3, nonce);
             if (ll_read_digest_if(hw) && hits < 16) {
                 hit_nonce[hits] = nonce;
                 memcpy(hit_words[hits], hw, sizeof(hw));
@@ -174,7 +183,7 @@ bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
         esp_sha_release_hardware();
 
         for (int k = 0; k < hits; ++k) {
-            words_to_bytes(hit_words[k], got);
+            digest_regs_to_bytes(hit_words[k], got);
             uint32_t n = hit_nonce[k];
             patched[76] = (uint8_t)n;
             patched[77] = (uint8_t)(n >> 8);
@@ -194,26 +203,27 @@ bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
 bool bm24_sha_hw_selftest(int n)
 {
     uint8_t header[80], want[32], got[32];
-    uint32_t mid[8], tail3[3], hw[8];
+    uint32_t mid[8], mid_regs[8], tail3[3], hw[8];
 
     for (int v = 0; v < n; ++v) {
         for (int i = 0; i < 80; ++i)
             header[i] = (uint8_t)(v * 131 + i * 37 + 11);
 
         bm24_sha_midstate(header, mid);
+        midstate_to_digest_regs(mid, mid_regs);
         header_tail3(header, tail3);
         uint32_t nonce;
         memcpy(&nonce, header + 76, 4);
 
         hw_begin();
-        hw_hash_core(mid, tail3, nonce);
+        hw_hash_core(mid_regs, tail3, nonce);
         /* IMMER den vollen Digest lesen — nie die Filterfunktion als
            Referenz nehmen (die 1.x-Falle, die dort den Selbsttest
            sabotiert hat). */
         ll_read_digest(hw);
         esp_sha_release_hardware();
 
-        words_to_bytes(hw, got);
+        digest_regs_to_bytes(hw, got);
         bm24_double_sha(header, 80, want);
         if (memcmp(want, got, 32) != 0)
             return false;

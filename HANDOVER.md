@@ -32,32 +32,36 @@ v2 liegt außerhalb des Workspace, weil der IDF-Build Pfade mit Leerzeichen able
 - Host-Tests brauchen MinGW-GCC (per winget installiert), Pfad:
   `~/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT*/mingw64/bin`
 
-## Was hängt: der Hardware-SHA-Kernel unter IDF 5.5
+## Hardware-SHA-Kernel unter IDF 5.5: am 27.07.2026 geloest
 
-Das ist der einzige offene Punkt, aber der entscheidende.
+Der entscheidende Phase-2-Blocker ist beseitigt.
 
-| Variante | Durchsatz Kern 0 | Korrektheit |
-|---|---|---|
-| 1.x zum Vergleich (IDF 4.4) | ~250 kH/s | 64/64 gegen mbedtls |
-| roher Registerpfad, portiert | **57,3 kH/s** | **1 Abweichung** → Selbstabschaltung |
-| dokumentierte `esp_sha_block`-API | 8,2 kH/s | ebenfalls 1 Abweichung |
+| Variante | Kern 0 | Kern 1 | gesamt | Korrektheit |
+|---|---|---|---|---|
+| 1.x zum Vergleich (IDF 4.4) | ~250 kH/s | ~40 kH/s | 292-298 kH/s | 64/64 gegen mbedtls |
+| IDF-5.5-Registerpfad, korrigiert | **270,3 kH/s** | **35,6 kH/s** | **306,0 kH/s** | **64/64 + Laufzeitpruefung gruen** |
 
-Zwei Symptome, vermutlich dieselbe Ursache:
-1. **Faktor 4 zu langsam** gegenüber 1.x, obwohl derselbe Registerpfad.
-2. **Genau eine Abweichung** pro Lauf, bei 0 bestätigten Kandidaten. Die
-   Abweichung tritt beim ersten Filtertreffer auf (1 von 65536), das heißt
-   die Hashes stimmen vermutlich generell nicht.
+Der vorherige Wert 57,3 kH/s war nur der angebrochene erste
+Sekundenabschnitt bis zur Selbstabschaltung, kein echter Durchsatz.
 
-### Nächster Schritt, der Klarheit bringt
+Ursache: `bm24_sha_midstate()` liefert normale FIPS-u32, die H-Register
+erwarten auf dem little-endian S3 aber jedes Wort byteverdreht. Umgekehrt
+waren die gelesenen H-Woerter nochmals big-endian serialisiert worden,
+obwohl ihr rohes Speicherbild bereits der korrekte Digest ist. Der Fix:
 
-In `main/app_main.c` ist der HW-Selbsttest gerade eingebaut worden
-(`bm24_sha_hw_selftest(64)`), **aber noch nie gelaufen**. Ein Flash und ein
-Blick auf die Zeile „Selbsttest HW-Werk:" entscheidet alles:
+1. Midstate einmal pro Job per `__builtin_bswap32` ins H-Registerlayout.
+2. Enddigest per `memcpy`, keine zweite Bytekonvertierung.
+3. Keine Zusatzarbeit im Nonce-Hot-Loop.
 
-- **FEHLGESCHLAGEN** → der Registerpfad rechnet grundsätzlich falsch, dann ist
-  es die Byte-Reihenfolge (siehe unten). Das ist die wahrscheinliche Antwort.
-- **64/64** → die Hashes stimmen, dann liegt der Fehler im Filter/Leseweg
-  (`ll_read_digest_if`).
+Geraetemessung:
+
+```
+Selbsttest HW-Werk: 64/64 == Referenz
+[bench] Kern0 270.3 kH/s, Kern1 35.6 kH/s, gesamt 306.0 kH/s
+```
+
+Weitere 45 Sekunden: 441 HW-Filtertreffer, null Abweichungen, konstant
+306,0 kH/s, 59-60 °C auf dem pausenlosen Pruefstand.
 
 ```bash
 cd /pfad/zum/Desktop/bitminer24-firmware-v2
@@ -66,25 +70,12 @@ python -m platformio run -e bm24-v2 -t upload --upload-port COM21
 # dann seriell mitlesen, 115200
 ```
 
-### Konkrete Verdachtsmomente
+### Naechster Produkt-Schritt
 
-1. **Byte-Reihenfolge der Textregister.** Die Konstanten in 1.x verraten, dass
-   die Textregister die Nachrichtenwörter byteverdreht nehmen (`0x00000080`
-   statt `0x80000000`, Länge 640 als `0x80020000`), die H-Register dagegen
-   normal. Ich habe zuerst big-endian konvertiert (falsch), dann roh per
-   `memcpy` übernommen. Zu prüfen ist, wie 1.x den Puffer wirklich füllt:
-   in `mining.cpp` wird `job->sha_buffer` an `nerd_sha_ll_fill_text_block_sha256`
-   übergeben — nachsehen, ob dieser Puffer vorher schon byteverdreht wurde.
-   Das ist der Kern der Sache.
-
-2. **Registerzugriff.** 1.x liest die H-Register mit
-   `DPORT_SEQUENCE_REG_READ`, v2 aktuell mit einfachem `REG_READ`. Auf dem S3
-   sollte das gleichwertig sein, ist aber nicht verifiziert.
-
-3. **Faktor 4.** Selbst wenn die Korrektheit stimmt, fehlt der Durchsatz.
-   Verdächtig ist `hw_begin()` je 8192er-Abschnitt (`esp_sha_acquire_hardware`
-   setzt seit 5.5 den Baustein zurück) und der zusätzliche Digest-Lesevorgang
-   pro Hash.
+Der aktuelle v2-Build ist weiterhin ein reproduzierbarer Pruefstand, noch
+kein Miner. Jetzt Stratum/Jobaufbereitung/Validierung als native,
+host-testbare Komponenten portieren; danach WiFi/NVS/UI. Den schnellen
+Registerpfad dabei unveraendert als abgenommene Basis behandeln.
 
 ### Quellen, die schon geprüft sind
 

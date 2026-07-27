@@ -86,8 +86,13 @@ void app_main(void)
         }
         printf("Selbsttest: Midstate SW == Referenz\n");
     }
+    const bool hw_ok = bm24_sha_hw_selftest(64);
     printf("Selbsttest HW-Werk: %s\n",
-           bm24_sha_hw_selftest(64) ? "64/64 == Referenz" : "FEHLGESCHLAGEN");
+           hw_ok ? "64/64 == Referenz" : "FEHLGESCHLAGEN");
+    if (!hw_ok) {
+        printf("HW-Pruefstand bleibt aus: keine Messung mit falschen Hashes.\n");
+        return;
+    }
 
     temperature_sensor_handle_t tsens = NULL;
     temperature_sensor_config_t tcfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);

@@ -25,32 +25,54 @@ Leistung. Das HW-Werk ist nicht nur schneller, sondern auch deutlich
 effizienter. Rechenlast auf die CPU zu verlagern ist thermisch der
 schlechtere Weg.
 
-## 27.07.2026 — Hardware-SHA-Werk unter IDF 5.5 (offen)
+## 27.07.2026 — Hardware-SHA-Werk unter IDF 5.5 (geloest)
 
-| Pfad | Durchsatz | Status |
-|---|---|---|
-| roher Registerpfad aus 1.x | 57-65 kH/s im ersten Abschnitt, dann Stillstand | untauglich unter 5.5 |
-| dokumentierte API (`esp_sha_block` + Modus explizit) | 8,2 kH/s | korrekt aufrufbar, aber 8x langsamer; eine Abweichung zur Referenz |
+| Pfad | HW | SW | gesamt | Status |
+|---|---|---|---|---|
+| fehlerhaftes H-Layout | 57,3 kH/s im angebrochenen ersten Messfenster | 35,7 | — | erster Treffer wich ab, Selbstabschaltung |
+| korrigierter Registerpfad | **270,3 kH/s** | **35,6 kH/s** | **306,0 kH/s** | **64/64; 45-s-Nachlauf ohne Abweichung** |
 
-Belege fuer die Ursache des Stillstands:
-- Ab IDF 5.5 setzen die SHA-Funktionen den Modus **nicht mehr implizit**,
-  er muss vor jedem Block gesetzt werden
-  (Migration Guide 5.5, Security).
-- AES/SHA/MPI teilen sich Steuerregister; deren Zugriff wurde gekapselt
-  und abgesichert (espressif/esp-idf@7761b0f). Der direkte
-  `SHA_CONTINUE_REG`/`SHA_START_REG`-Pfad aus IDF 4.4 verletzt das.
+Die vermeintlichen 57,3 kH/s waren keine reale Dauerleistung. Der Pfad
+wurde beim ersten 16-Bit-Filtertreffer innerhalb des ersten
+Sekundenfensters korrekt abgeschaltet; die Statistik zeigte nur den bis
+dahin gerechneten Bruchteil.
 
-Der Selbstschutz hat funktioniert wie gebaut: Die Abweichung wurde erkannt
-und der HW-Pfad hat sich abgeschaltet, statt falsche Ergebnisse zu liefern.
+### Ursache und Korrektur
+
+Text- und H-Register sind beide als rohe little-endian CPU-Woerter
+zugaenglich, aber ihre Daten bedeuten Verschiedenes:
+
+- Die Textregister erhalten die vier Nachrichtenbytes roh aus dem Speicher.
+- Die portable SHA-Referenz stellt einen Midstate als normale FIPS-u32 dar.
+  Das H-Registerlayout erwartet diese Woerter byteverdreht.
+- Gelesene H-Register duerfen fuer den Digest nicht nochmals als big-endian
+  serialisiert werden. Ihr rohes little-endian Speicherbild sind bereits
+  die richtigen 32 Digest-Bytes.
+
+Der Fix dreht den portablen Midstate genau einmal pro Job in das
+H-Registerlayout und kopiert den Enddigest roh. Im Nonce-Hot-Loop kam keine
+Konvertierung hinzu.
+
+Der Geraete-Boot-Selbsttest meldet danach:
+
+```
+Selbsttest HW-Werk: 64/64 == Referenz
+```
+
+Der anschliessende Lauf blieb bei 270,3 + 35,6 = 306,0 kH/s konstant.
+Nach zusaetzlichen 45 Sekunden standen 441 hardwareseitige
+16-Bit-Filtertreffer und null Abweichungen. Temperatur auf dem reinen
+Dauerlast-Pruefstand: 59-60 °C.
 
 ### Was daraus folgt
 
-Der Weg zu mehr Leistung fuehrt **ausschliesslich** ueber das SHA-Werk,
-nicht ueber die CPU. Zu klaeren ist, wie der schnelle Registerpfad unter
-IDF 5.5 sauber betrieben wird: Modus je Block explizit setzen, Zugriff auf
-die geteilten Takt-/Reset-Register ueber die vorgesehenen Makros, und die
-Aequivalenz danach wieder gegen die Referenz beweisen. Erst wenn der
-Registerpfad unter 5.5 die 250+ kH/s der 1.x erreicht, ist der Umstieg
-leistungsseitig neutral — der DMA-Modus waere der Schritt darueber hinaus.
+Der IDF-5.5-Umstieg ist fuer den Mining-Kern nicht mehr
+leistungsneutral, sondern liegt im reproduzierbaren Pruefstand etwa
+8-14 kH/s ueber der 1.x-Gesamtreferenz. Mehr Takt wurde dafuer nicht
+verwendet; der ESP32-S3 laeuft weiterhin mit 240 MHz.
 
-Bis dahin bleibt 1.8.3-bm1 der Auslieferungsstand.
+Die 59-60 °C des pausenlosen Pruefstands sind korrekt, aber noch kein
+Produkt-Abnahmewert. Im echten Miner kommen WiFi/Stratum/UI und eine
+temperaturbasierte SW-Lastregelung hinzu. Ziel bleibt: 300+ kH/s ohne
+thermisch unkontrollierte Optimierung. SHA-DMA bleibt ein spaeteres,
+zeitlich begrenztes Experiment und ist keine Voraussetzung mehr fuer 2.0.
