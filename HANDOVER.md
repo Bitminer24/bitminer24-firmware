@@ -1,9 +1,26 @@
 # Übergabe — Stand 27.07.2026
 
-## WICHTIG ZUERST: Das Testgerät mint gerade NICHT
+## WICHTIG ZUERST: Auf COM21 laeuft jetzt der IDF-5.5-Produkt-RC
 
-Auf dem LilyGO T-Display S3 (COM21) liegt aktuell die **v2-Prüfstand-Firmware**,
-nicht der Miner. Zum Zurückholen des Produktivstands:
+Auf dem LilyGO T-Display S3 liegt **BitMiner24 2.0.0-rc1**, kein fester
+Pruefstand und keine 1.x-Firmware. Der Boot ist sauber, Display und Setup-AP
+laufen, der SHA-Hardware-Selbsttest meldet 64/64. Das Geraet mint noch nicht,
+weil nach dem Factory-Flash absichtlich keine privaten Zugangsdaten im NVS
+liegen.
+
+Ersteinrichtung direkt am Handy oder Rechner:
+
+1. WLAN `BitMiner24-62499D`, Passwort `MineYourCoins`
+2. `http://192.168.4.1`
+3. eigenes WLAN und echte BTC-Adresse/Worker eintragen
+4. fuer `public-pool.io` zunaechst Port `3333`, TLS aus, Passwort `x`
+
+Danach muss COM21 fuer die echte Abnahme mitgelesen werden: Connect,
+Subscribe, Authorize, Job, circa 300 kH/s, Temperaturregelung und mindestens
+ein akzeptierter Share. Erst nach diesem Lauf und einem mehrstuendigen Soak
+wird aus RC1 ein Release.
+
+Nur fuer den Notfall kann 1.8.3 wiederhergestellt werden:
 
 ```bash
 cd "/pfad/zum/Desktop/CryptoTuts Website/nerdminer-flasher-dev"
@@ -11,14 +28,14 @@ python -m esptool --chip esp32s3 --port COM21 --baud 921600 \
   write_flash 0x0 NerdminerV2_factory.bin
 ```
 
-Danach WLAN und BTC-Adresse einmal im Portal eintragen (Factory-Flash löscht NVS).
+Ein Factory-Flash ab `0x0` loescht NVS; ein spaeteres App-/OTA-Update nicht.
 
 ## Zwei Bäume
 
 | | Pfad | Rolle |
 |---|---|---|
-| 1.8.3-bm1 | `CryptoTuts Website/nerdminer-firmware` | **Auslieferungsstand**, Arduino/IDF 4.4, 292-298 kH/s @ 52-55 °C |
-| 2.0 | `Desktop/bitminer24-firmware-v2` | Neubau auf IDF 5.5, Mining-Kern noch nicht abgenommen |
+| 1.8.3-bm1 | `CryptoTuts Website/nerdminer-firmware` | Rueckfallstand, Arduino/IDF 4.4, 292-298 kH/s @ 52-55 °C |
+| 2.0 | `Desktop/bitminer24-firmware-v2` | **Aktiver RC auf COM21**, nativ IDF 5.5, Produkt-Soak noch offen |
 
 v2 liegt außerhalb des Workspace, weil der IDF-Build Pfade mit Leerzeichen ablehnt.
 
@@ -26,7 +43,8 @@ v2 liegt außerhalb des Workspace, weil der IDF-Build Pfade mit Leerzeichen able
 
 - ESP-IDF 5.5.0 / GCC 14.2, bootet auf dem Gerät
 - A/B-OTA-Partitionen aktiv, App ab `0x10000`, Boot-Rollback an
-- **32/32 Host-Tests grün** (`pio test -e native`): Formatierung, SHA-Referenz
+- **38/38 Host-Tests grün** (`pio test -e native`): Konfiguration,
+  Formatierung, SHA-Referenz
   gegen NIST + Genesis, Midstate-Äquivalenz, SW-Kernel-Filter über 800k
   Nonces, native Stratum-Jobaufbereitung und JSON-RPC-Drahtformat
 - CI-Workflow (Host-Tests + Firmware-Build) geschrieben, noch nicht gepusht
@@ -107,19 +125,48 @@ ArduinoJson an der Protokollgrenze:
 Geraetelauf ueber den kompletten notify->Share-Pfad: 52 stationaere
 1-s-Samples, **300,26 kH/s im Mittel**, 60,7 °C, 218/35 Kandidaten,
 21 share-faehige Treffer, **0 Abweichungen**. RAM 6,2 %, Flash 8,1 %.
-Stand: 32/32 Host-Tests gruen.
+Stand vor RC-Rollout: 38/38 Host-Tests gruen.
 
-### Naechster Produkt-Schritt
+### Produktpfad im RC1
 
-Der aktuelle v2-Build ist ein echter Miner-Kern, aber mangels
-WiFi/NVS/Pool-Socket noch mit festem `mining.notify`-Vektor und somit kein
-Produktminer. Als Naechstes:
+Der feste `mining.notify`-Pruefstand ist aus `app_main` entfernt. Der Build
+enthaelt nun:
 
-1. versionierte NVS-Konfiguration + WiFi-Provisioning,
-2. Socket-/Reconnect-Task, der `bm24_stratum` mit `bm24_miner` verbindet,
-3. danach UI und OTA-Transport,
-4. abschliessend Temperaturgrenze mit WiFi, Display und Gehaeuse im
-   mehrstuendigen Soak festlegen.
+- versionierten NVS-Blob mit Validierung und Sperre fuer Platzhalter/Burn-Adresse
+- nativen Wi-Fi-STA-Pfad mit Event-Reconnect und WPA2-Setup-AP
+- lokales HTTP-Portal fuer WLAN, Worker, Pool und Firmware-Update
+- Stratum TCP oder TLS mit Zertifikatsbundle, SNTP, Keepalive und Backoff
+- Subscribe/Authorize, Notify/Difficulty/Extranonce, Jobwechsel und Share-Submit
+- nativen IDF-I80/ST7789-Treiber auf den offiziellen T-Display-S3-Pins
+- A/B-OTA; ein neues Image wird erst nach NVS-, Display-, SHA- und
+  Netzwerk/Portal-Selbsttest als gueltig markiert
+- Supervisor-Watchdog, HW-Stall-Erkennung, SHA-Fail-closed und smarte
+  SW-Temperaturdosierung
+- GPIO 14: vier Sekunden halten oeffnet das Setup-Portal erneut
+
+Es gibt im v2-Produktbuild keine Arduino-, WiFiManager-, ArduinoJson- oder
+TFT_eSPI-Abhaengigkeit mehr. Der reale Poolpfad ist implementiert, aber noch
+nicht mit den echten Zugangsdaten des Besitzers end-to-end vermessen.
+
+### Verifikation des RC1
+
+Bereits bestanden:
+
+- 38/38 Host-Tests
+- IDF-5.5.0/GCC-14.2-Firmwarebuild
+- RAM 68.216 / 327.680 Byte (20,8 %)
+- App 1.052.705 / 3.145.728 Byte (33,5 %)
+- Flash auf COM21
+- nativer LCD-Start, Temperatursensor, SHA-Selbsttest 64/64
+- WPA2-Setup-AP und HTTP-Server laut Geraetelog
+- sauberer Betrieb ohne Task-Watchdog-Fehler
+
+Noch offen und nicht schoenreden:
+
+- lokale Provisionierung mit echtem WLAN und echter BTC-Adresse
+- echter Pool-Handshake und akzeptierter Share
+- Durchsatz/Temperatur mit Wi-Fi, Display und Gehaeuse
+- Reconnect-, OTA-Rollback- und mehrstuendiger Soak-Test auf Hardware
 
 ### Quellen, die schon geprüft sind
 
@@ -140,11 +187,10 @@ Viertel der Leistung. Reserve steckt ausschließlich im SHA-Werk, nie in der CPU
 
 Details in `MESSUNGEN.md`.
 
-## Offene Punkte im 1.x-Baum
+## Alter 1.x-Baum
 
-- Commits `7bfa45d` (TLS/SHA-Sperre, Solo-Screen), `13dd532` (Knopf-Task),
-  `fc0182d`, `a67140f` liegen lokal. **Nichts gepusht**, wartet auf OK.
+- `main` liegt 18 Commits vor `origin/main`; **nichts gepusht**.
 - Der Knopf-Fix (Seitenwechsel hing >30 s) ist geflasht, aber **physisch noch
-  nicht getestet**. Erwartung: Wechsel unter einer Sekunde.
-- Testkonfiguration nutzt die Burn-Adresse `1BitcoinEaterAddressDontSendf59kuE`.
-  Vor jedem Release muss ein Check das verhindern.
+  nicht getestet**. Er gehoert nur zum Rueckfallstand.
+- Die v2-Konfigurationsvalidierung lehnt
+  `1BitcoinEaterAddressDontSendf59kuE` und `yourBtcAddress` ab.

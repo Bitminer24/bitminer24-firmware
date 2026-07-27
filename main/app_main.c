@@ -1,168 +1,269 @@
-/* BitMiner24 Firmware 2.0 — Phase-2-Gesamtpruefstand.
-   Ein festes mining.notify durchlaeuft IDF-cJSON, Coinbase/Merkle/Target,
-   atomaren Jobwechsel, HW+SW-Kernel, Referenzpruefung und Share-Queue.
-   Noch ohne WLAN/Pool, damit Leistung und Temperatur reproduzierbar bleiben. */
+/* BitMiner24 Firmware 2.0
+   Reiner ESP-IDF-5.5-Produktfad: NVS -> WLAN/Setup -> Stratum -> native
+   Jobaufbereitung -> verifizierte HW/SW-Kernel -> Share-Submit. */
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
-#include <inttypes.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_idf_version.h"
+#include "driver/gpio.h"
 #include "driver/temperature_sensor.h"
+#include "esp_app_desc.h"
+#include "esp_idf_version.h"
+#include "esp_log.h"
+#include "esp_ota_ops.h"
+#include "esp_system.h"
 #include "esp_task_wdt.h"
+#include "nvs_flash.h"
 
-#include "bm24_sha.h"
-#include "bm24_sha_sw.h"
-#include "bm24_sha_hw.h"
-#include "bm24_stratum.h"
-#include "bm24_work.h"
+#include "bm24_config.h"
+#include "bm24_display.h"
 #include "bm24_miner.h"
+#include "bm24_network.h"
+#include "bm24_pool.h"
 
-/* Fester mining.notify-Vektor. Er durchlaeuft beim Boot denselben
-   cJSON->Stratum->Coinbase->Merkle->Header-Pfad wie spaeter ein Pooljob. */
-static const char s_notify_fixture[] =
-    "{\"id\":null,\"method\":\"mining.notify\",\"params\":["
-    "\"job-7\","
-    "\"000102030405060708090a0b0c0d0e0f"
-      "101112131415161718191a1b1c1d1e1f\","
-    "\"01000000\",\"ffffffff\",["
-      "\"00000000000000000000000000000000"
-        "00000000000000000000000000000000\","
-      "\"ffffffffffffffffffffffffffffffff"
-        "ffffffffffffffffffffffffffffffff\"],"
-    "\"20000000\",\"1d00ffff\",\"65000000\",true]}";
+#define BUTTON_SETUP GPIO_NUM_14
 
-static uint8_t s_header[80];
-static bm24_stratum_message s_fixture_message;
+static const char *TAG = "bm24";
+static temperature_sensor_handle_t s_temperature;
+static bool s_display_ready;
 
-static void stats_task(void *arg);
-
-void app_main(void)
+static bool running_image_pending_verify(void)
 {
-    printf("\n=== BitMiner24 2.0 — HW+SW-Pruefstand (IDF 5.5, GCC 14) ===\n");
-    printf("ESP-IDF %s\n", esp_get_idf_version());
-
-    if (!bm24_stratum_parse_line(s_notify_fixture, &s_fixture_message) ||
-        s_fixture_message.type != BM24_STRATUM_MSG_NOTIFY) {
-        printf("SELBSTTEST FEHLGESCHLAGEN: mining.notify unlesbar\n");
-        return;
-    }
-    bm24_work_input work_input;
-    bm24_work work;
-    bm24_stratum_job_view(&s_fixture_message.job, &work_input);
-    bm24_work_status work_status =
-        bm24_work_build(&work_input, "a1b2c3d4", 1, 4, &work);
-    if (work_status != BM24_WORK_OK) {
-        printf("SELBSTTEST FEHLGESCHLAGEN: Jobaufbereitung: %s\n",
-               bm24_work_status_string(work_status));
-        return;
-    }
-    memcpy(s_header, work.header, sizeof(s_header));
-    printf("Selbsttest: Stratum -> Merkle -> 80-Byte-Header\n");
-
-    /* Selbsttest vor jeder Messung: der schnelle Kernel muss der Referenz
-       entsprechen, sonst ist jede Zahl wertlos. Gleiche Disziplin wie der
-       Boot-Selbsttest in 1.x. */
-    {
-        uint32_t mid_sw[8], mid_ref[8];
-        nerd_mids(mid_sw, s_header);
-        bm24_sha_midstate(s_header, mid_ref);
-        if (memcmp(mid_sw, mid_ref, sizeof(mid_sw)) != 0) {
-            printf("SELBSTTEST FEHLGESCHLAGEN: Midstate weicht ab — Abbruch\n");
-            return;
-        }
-        printf("Selbsttest: Midstate SW == Referenz\n");
-    }
-    temperature_sensor_handle_t tsens = NULL;
-    temperature_sensor_config_t tcfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
-    temperature_sensor_install(&tcfg, &tsens);
-    temperature_sensor_enable(tsens);
-
-    /* Pruefstand: Watchdog ab hier bewusst aus. Der echte Miner-Kern arbeitet
-       in begrenzten Chunks; Produktfirmware aktiviert den Watchdog mit den
-       finalen Task-Heartbeats wieder. */
-    esp_task_wdt_deinit();
-
-    if (!bm24_miner_start()) {
-        printf("SELBSTTEST FEHLGESCHLAGEN: HW-Werk oder Minerstart\n");
-        return;
-    }
-    printf("Selbsttest HW-Werk: 64/64 == Referenz\n");
-
-    bm24_miner_job miner_job = {
-        .tag = 1,
-        .pool_difficulty = 0.00015
-    };
-    memcpy(miner_job.header, work.header, sizeof(miner_job.header));
-    memcpy(miner_job.network_target_le, work.network_target_le,
-           sizeof(miner_job.network_target_le));
-    if (!bm24_miner_set_job(&miner_job)) {
-        printf("SELBSTTEST FEHLGESCHLAGEN: Jobuebergabe an Miner\n");
-        return;
-    }
-    printf("Selbsttest: atomarer Jobwechsel -> HW/SW-Worker\n");
-
-    xTaskCreatePinnedToCore(stats_task, "stats", 4096, tsens, 5, NULL, 0);
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    return running &&
+           esp_ota_get_state_partition(running, &state) == ESP_OK &&
+           state == ESP_OTA_IMG_PENDING_VERIFY;
 }
 
-static uint8_t smart_sw_duty(float temp, uint8_t current)
+static void fatal_boot(const char *reason, bool rollback)
 {
-    /* 300 kH/s moeglichst halten, aber nicht blind durchheizen:
-       - ab 63 C SW aus, bis der Chip wieder unter 59 C ist
-       - im warmen Bereich nur den langsamen/waermeren SW-Anteil dosieren
-       - das effiziente SHA-Werk bleibt unangetastet */
-    if (temp >= 63.0f)
+    ESP_LOGE(TAG, "FATAL: %s", reason);
+    if (s_display_ready) {
+        bm24_display_frame frame = {0};
+        strlcpy(frame.line[0], "FEHLER", sizeof(frame.line[0]));
+        strlcpy(frame.line[1], reason, sizeof(frame.line[1]));
+        strlcpy(frame.line[3], rollback ? "OTA ROLLBACK" : "USB FLASH",
+                sizeof(frame.line[3]));
+        bm24_display_set(&frame);
+    }
+    if (rollback && running_image_pending_verify()) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+    }
+    for (;;)
+        vTaskDelay(pdMS_TO_TICKS(1000));
+}
+
+static uint8_t smart_sw_duty(float temperature, uint8_t current)
+{
+    /* Das effiziente SHA-Werk bleibt bei 240 MHz. Geregelt wird nur der
+       langsamere und thermisch teurere Softwareanteil, mit Hysterese. */
+    if (temperature >= 63.0f)
         return 0;
     if (current == 0)
-        return temp < 59.0f ? 85 : 0;
-    if (temp >= 60.0f)
+        return temperature < 59.0f ? 85 : 0;
+    if (temperature >= 60.0f)
         return 85;
-    if (temp >= 58.0f)
+    if (temperature >= 58.0f)
         return 90;
-    if (temp <= 56.0f)
+    if (temperature <= 56.0f)
         return 100;
     return current;
 }
 
-static void stats_task(void *arg)
+static void supervisor_task(void *arg)
 {
-    temperature_sensor_handle_t tsens = (temperature_sensor_handle_t)arg;
+    (void)arg;
+    esp_task_wdt_config_t watchdog = {
+        .timeout_ms = 12000,
+        .idle_core_mask = 0,
+        .trigger_panic = true
+    };
+    bool watchdog_added =
+        esp_task_wdt_init(&watchdog) == ESP_OK &&
+        esp_task_wdt_add(NULL) == ESP_OK;
+
+    gpio_config_t button = {
+        .pin_bit_mask = 1ULL << BUTTON_SETUP,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE
+    };
+    gpio_config(&button);
+
+    uint32_t last_generation = 0;
     uint64_t last_hw = 0, last_sw = 0;
-    double best_diff = 0.0;
+    uint32_t stalled_seconds = 0;
+    uint32_t setup_hold = 0;
+    bool setup_opened = false;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        bm24_miner_stats stats;
-        bm24_miner_get_stats(&stats);
+        if (watchdog_added)
+            esp_task_wdt_reset();
 
-        bm24_miner_share share;
-        while (bm24_miner_get_share(&share, 0)) {
-            if (share.difficulty > best_diff)
-                best_diff = share.difficulty;
-            if (share.network_block)
-                printf("*** BLOCKKANDIDAT job=%" PRIu32 " nonce=%08" PRIx32
-                       " ***\n", share.job_tag, share.nonce);
+        if (gpio_get_level(BUTTON_SETUP) == 0) {
+            if (setup_hold < 5)
+                ++setup_hold;
+            if (setup_hold >= 4 && !setup_opened) {
+                setup_opened = bm24_network_open_portal();
+                if (setup_opened)
+                    ESP_LOGW(TAG, "Setup-Portal per Taste geoeffnet");
+            }
+        } else {
+            setup_hold = 0;
         }
 
-        float temp = 0;
-        temperature_sensor_get_celsius(tsens, &temp);
+        bm24_miner_stats miner;
+        bm24_pool_stats pool;
+        bm24_network_status network;
+        bm24_miner_get_stats(&miner);
+        bm24_pool_get_stats(&pool);
+        bm24_network_get_status(&network);
 
-        uint8_t next_duty = smart_sw_duty(temp, stats.sw_duty_percent);
-        if (next_duty != stats.sw_duty_percent)
-            bm24_miner_set_sw_duty(next_duty);
+        uint64_t hw_rate = 0, sw_rate = 0;
+        if (miner.generation == last_generation) {
+            hw_rate = miner.hw_hashes - last_hw;
+            sw_rate = miner.sw_hashes - last_sw;
+        }
+        last_generation = miner.generation;
+        last_hw = miner.hw_hashes;
+        last_sw = miner.sw_hashes;
 
-        uint64_t dhw = stats.hw_hashes - last_hw;
-        uint64_t dsw = stats.sw_hashes - last_sw;
-        printf("[miner] HW %.1f kH/s, SW %.1f kH/s, gesamt %.1f kH/s, "
-               "Duty %u%%, Kandidaten %" PRIu64 "/%" PRIu64
-               ", Shares %" PRIu64 ", Best %.6g, Temp %.0f C%s\n",
-               dhw / 1000.0, dsw / 1000.0, (dhw + dsw) / 1000.0,
-               (unsigned)next_duty, stats.hw_candidates,
-               stats.sw_candidates, stats.shares, best_diff, temp,
-               stats.mismatches ? " *** MISMATCH ***" : "");
-        last_hw = stats.hw_hashes;
-        last_sw = stats.sw_hashes;
+        float temperature = 0.0f;
+        if (s_temperature &&
+            temperature_sensor_get_celsius(s_temperature, &temperature) ==
+                ESP_OK) {
+            uint8_t duty = smart_sw_duty(
+                temperature, miner.sw_duty_percent);
+            if (duty != miner.sw_duty_percent)
+                bm24_miner_set_sw_duty(duty);
+        } else {
+            /* Ohne Temperaturmessung ist nur das kuehlere HW-Werk erlaubt. */
+            bm24_miner_set_sw_duty(0);
+        }
+
+        if (miner.active && miner.hw_trusted && hw_rate == 0) {
+            if (++stalled_seconds >= 20) {
+                ESP_LOGE(TAG, "HW-Worker 20 s ohne Fortschritt, Neustart");
+                esp_restart();
+            }
+        } else {
+            stalled_seconds = 0;
+        }
+        if (miner.mismatches) {
+            ESP_LOGE(TAG, "SHA-Mismatch erkannt, fail closed");
+            bm24_miner_clear_job();
+        }
+
+        if (s_display_ready) {
+            if (network.portal_active) {
+                bm24_display_setup(network.setup_ssid,
+                                   BM24_SETUP_PASSWORD);
+            } else {
+                bm24_display_frame frame = {0};
+                strlcpy(frame.line[0], "BITMINER24",
+                        sizeof(frame.line[0]));
+                snprintf(frame.line[1], sizeof(frame.line[1]),
+                         "%.1f KH/S  %.0f C",
+                         (hw_rate + sw_rate) / 1000.0, temperature);
+                snprintf(frame.line[2], sizeof(frame.line[2]),
+                         "HW %.1f  SW %.1f",
+                         hw_rate / 1000.0, sw_rate / 1000.0);
+                snprintf(frame.line[3], sizeof(frame.line[3]),
+                         "POOL %s  WIFI %d",
+                         pool.connected ? "ONLINE" : "WARTET",
+                         (int)network.rssi);
+                snprintf(frame.line[4], sizeof(frame.line[4]),
+                         "SHARES %" PRIu64 "/%" PRIu64,
+                         pool.accepted, pool.submitted);
+                snprintf(frame.line[5], sizeof(frame.line[5]),
+                         "IDF %s | DUTY %u%% | JOB %" PRIu32,
+                         esp_get_idf_version(),
+                         (unsigned)miner.sw_duty_percent,
+                         pool.active_job_tag);
+                bm24_display_set(&frame);
+            }
+        }
+
+        ESP_LOGI(TAG,
+                 "%.1f kH/s (HW %.1f, SW %.1f), %.1f C, Duty %u%%, "
+                 "WLAN %s, Pool %s, Shares %" PRIu64 "/%" PRIu64
+                 ", Fehler %" PRIu64,
+                 (hw_rate + sw_rate) / 1000.0, hw_rate / 1000.0,
+                 sw_rate / 1000.0, temperature,
+                 (unsigned)miner.sw_duty_percent,
+                 network.connected ? network.ip :
+                     (network.portal_active ? "SETUP" : "offline"),
+                 pool.connected ? "online" : pool.last_error,
+                 pool.accepted, pool.submitted, miner.mismatches);
     }
+}
+
+void app_main(void)
+{
+    const esp_app_desc_t *app = esp_app_get_description();
+    bool pending_verify = running_image_pending_verify();
+    printf("\n=== BitMiner24 %s | ESP-IDF %s ===\n",
+           app->version, esp_get_idf_version());
+
+    esp_err_t nvs = nvs_flash_init();
+    if (nvs == ESP_ERR_NVS_NO_FREE_PAGES ||
+        nvs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs = nvs_flash_init();
+    }
+    if (nvs != ESP_OK)
+        fatal_boot("NVS INIT", pending_verify);
+
+    s_display_ready = bm24_display_start();
+    if (!s_display_ready)
+        ESP_LOGE(TAG, "Display-Initialisierung fehlgeschlagen");
+
+    temperature_sensor_config_t temp_config =
+        TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
+    if (temperature_sensor_install(&temp_config, &s_temperature) != ESP_OK ||
+        temperature_sensor_enable(s_temperature) != ESP_OK) {
+        s_temperature = NULL;
+        ESP_LOGE(TAG, "Temperatursensor fehlt; SW-Kern bleibt aus");
+    }
+
+    if (!bm24_miner_start())
+        fatal_boot("SHA SELBSTTEST", pending_verify);
+    ESP_LOGI(TAG, "SHA-Hardware-Selbsttest 64/64 bestanden");
+
+    bm24_config config;
+    bm24_config_status config_status = bm24_config_load(&config);
+    bool provisioned = config_status == BM24_CONFIG_OK;
+    if (!provisioned) {
+        ESP_LOGW(TAG, "Konfiguration: %s; Setup wird gestartet",
+                 bm24_config_status_string(config_status));
+        bm24_config_defaults(&config);
+    }
+
+    bool connected = bm24_network_start(
+        provisioned ? &config : NULL, provisioned ? 20000 : 0);
+    bm24_network_status network;
+    bm24_network_get_status(&network);
+    if (!connected && !network.portal_active)
+        fatal_boot("WLAN/SETUP INIT", pending_verify);
+
+    /* Der Image-Checkpoint umfasst NVS, LCD-Treiber, SHA-Selbsttest und
+       einen funktionsfaehigen WLAN- oder Setup-Pfad. Erst jetzt ist ein
+       OTA-Image gemaess IDF-Rollbackvertrag gueltig. */
+    if (pending_verify) {
+        if (esp_ota_mark_app_valid_cancel_rollback() != ESP_OK)
+            fatal_boot("OTA VALIDIERUNG", true);
+        ESP_LOGI(TAG, "OTA-Image nach Selbsttests als gueltig markiert");
+    }
+
+    if (provisioned && !bm24_pool_start(&config))
+        fatal_boot("POOL TASK", false);
+
+    if (xTaskCreatePinnedToCore(supervisor_task, "bm24Supervisor", 6144,
+                                NULL, 5, NULL, 0) != pdPASS)
+        fatal_boot("SUPERVISOR TASK", false);
 }

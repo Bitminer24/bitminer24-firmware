@@ -22,5 +22,11 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 # aber alles drumherum (memcpy, FreeRTOS-Pfade) soll nicht Debug sein
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
-# Pruefstand: Task-Watchdog aus, die Bench-Tasks laufen bewusst ohne Pause
+# TLS-Zertifikate werden nach dem SNTP-Sync auch zeitlich geprueft.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+CONFIG_MBEDTLS_HAVE_TIME_DATE=y
+
+# Produktbetrieb: Der Supervisor aktiviert und fuettert den Task-Watchdog
+# gezielt. Idle-Tasks bleiben draussen, weil SHA absichtlich dauernd rechnet.
 CONFIG_ESP_TASK_WDT_INIT=n

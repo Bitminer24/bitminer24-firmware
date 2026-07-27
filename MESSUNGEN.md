@@ -116,3 +116,16 @@ IDF-5.5-Sensormessung liegt mit 60-61 °C ueber den 52-55 °C der
 ineffizienteren SW-Anteil; ab 63 °C stoppt sie ihn bis unter 59 °C. Das
 effiziente Hardware-Werk bleibt bei 240 MHz. Der finale Grenzwert wird erst
 mit WiFi, Display und Gehaeuse im Soak-Test festgelegt.
+
+## 27.07.2026 — Produkt-RC1 auf COM21
+
+Der feste Pruefstand wurde durch den nativen Produktpfad ersetzt und als
+`2.0.0-rc1` geflasht. Der Boot mit IDF 5.5.0 besteht NVS, nativen
+I80/ST7789-Displaystart, Temperatursensor und SHA-Hardware-Selbsttest 64/64.
+Ohne gespeicherte Konfiguration startet der WPA2-Setup-AP
+`BitMiner24-62499D` mit HTTP-Portal.
+
+Diese Beobachtung ist noch **keine neue Leistungszahl**. Eine belastbare
+Produktmessung beginnt erst nach lokaler Eingabe von WLAN und echter
+BTC-Adresse und muss Pool-Handshake, akzeptierte Shares, Wi-Fi-Reconnect,
+Displaybetrieb, Temperaturregelung und den mehrstuendigen Soak einschliessen.
