@@ -1,0 +1,45 @@
+# BitMiner24 Firmware 2.0 — CI
+# Zwei Pflichten pro Push: Host-Tests (schnell, ohne Hardware) und der
+# Geraete-Build mit ESP-IDF 5. Beides muss gruen sein, bevor irgendetwas
+# in ein Release-Manifest wandert.
+
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Run host tests
+        run: pio test -e native
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+      - name: Build firmware
+        run: pio run -e bm24-v2
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bm24-v2-firmware
+          path: .pio/build/bm24-v2/firmware.bin

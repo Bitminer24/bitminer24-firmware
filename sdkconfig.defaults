@@ -1,0 +1,19 @@
+# BitMiner24 2.0 — Grundeinstellungen. Alles Weitere bleibt IDF-Default,
+# damit Abweichungen bewusst und dokumentiert sind.
+
+# 240 MHz, wie bei 1.x vermessen
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# 16 MB Flash (LilyGO T-Display S3)
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# eigene Partitionstabelle mit OTA-Slots
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Rollback: schlaegt der erste Boot nach einem OTA fehl, zurueck zum
+# alten Image. Kern des Update-Service, deshalb von Anfang an an.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Konsole auf USB-Serial-JTAG (T-Display S3 haengt direkt am USB)
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
