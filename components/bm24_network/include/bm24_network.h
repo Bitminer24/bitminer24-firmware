@@ -2,6 +2,7 @@
 #define BM24_NETWORK_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "bm24_config.h"
@@ -33,5 +34,11 @@ void bm24_network_get_status(bm24_network_status *out);
 #ifdef __cplusplus
 }
 #endif
+
+/* Der Statuslieferant fuellt JSON fuer das Web-Dashboard. Er wird von
+   app_main gesetzt, damit das Netzwerkmodul nicht auf Miner, Pool und
+   Metriken zugreifen muss und keine Abhaengigkeitsschleife entsteht. */
+typedef void (*bm24_status_provider)(char *json, size_t capacity);
+void bm24_network_set_status_provider(bm24_status_provider provider);
 
 #endif /* BM24_NETWORK_H */

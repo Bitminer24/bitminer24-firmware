@@ -13,6 +13,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "lwip/sockets.h"
+#include "bm24_dashboard_html.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
@@ -83,6 +84,14 @@ static const char PORTAL_TAIL[] =
     "'application/octet-stream'},body:f}).then(r=>r.text()).then(alert)\">"
     "Update installieren</button></html>";
 
+static bool start_http_portal(void);   /* definiert weiter unten */
+static bm24_status_provider s_status_provider;
+
+void bm24_network_set_status_provider(bm24_status_provider provider)
+{
+    s_status_provider = provider;
+}
+
 static void status_connected(bool connected)
 {
     portENTER_CRITICAL(&s_status_lock);
@@ -117,6 +126,14 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id,
         strlcpy(s_status.ip, ip, sizeof(s_status.ip));
         portEXIT_CRITICAL(&s_status_lock);
         xEventGroupSetBits(s_events, CONNECTED_BIT);
+        /* Im Heimnetz erreichbar machen: der Webserver bleibt an und
+           zeigt das Dashboard unter der vergebenen IP, die auch auf dem
+           Display steht.
+           bitminer24.local waere schoener, mDNS liegt seit IDF 5 aber in
+           der Komponenten-Registry, und der PlatformIO-Build loest
+           verwaltete Komponenten hier nicht auf. Nachrusten, sobald der
+           Build ueber idf.py laeuft oder die Komponente mitgeliefert wird. */
+        start_http_portal();
         ESP_LOGI(TAG, "WLAN verbunden, IP %s", ip);
     }
 }
@@ -240,7 +257,42 @@ static esp_err_t send_scan_options(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t portal_get(httpd_req_t *req)
+/* JSON fuer das Dashboard. Ohne angemeldeten Lieferanten bleibt es leer,
+   statt zu raten. */
+static esp_err_t status_get(httpd_req_t *req)
+{
+    char json[512];
+    json[0] = 0;
+    if (s_status_provider)
+        s_status_provider(json, sizeof(json));
+    if (!json[0])
+        strlcpy(json, "{}", sizeof(json));
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, json);
+}
+
+static esp_err_t dashboard_get(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, DASHBOARD_HTML);
+}
+
+static esp_err_t setup_get(httpd_req_t *req);
+
+/* Im Heimnetz zeigt / das Dashboard, im Setup-WLAN das Formular. So bleibt
+   der gewohnte Weg ueber 192.168.4.1 erhalten. */
+static esp_err_t root_get(httpd_req_t *req)
+{
+    bool portal;
+    portENTER_CRITICAL(&s_status_lock);
+    portal = s_status.portal_active;
+    portEXIT_CRITICAL(&s_status_lock);
+    return portal ? setup_get(req) : dashboard_get(req);
+}
+
+static esp_err_t setup_get(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -470,7 +522,7 @@ static bool start_http_portal(void)
     if (s_httpd)
         return true;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 12;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
     if (httpd_start(&s_httpd, &config) != ESP_OK)
@@ -479,7 +531,17 @@ static bool start_http_portal(void)
     const httpd_uri_t root = {
         .uri = "/",
         .method = HTTP_GET,
-        .handler = portal_get
+        .handler = root_get
+    };
+    const httpd_uri_t setup_page = {
+        .uri = "/setup",
+        .method = HTTP_GET,
+        .handler = setup_get
+    };
+    const httpd_uri_t status_page = {
+        .uri = "/status",
+        .method = HTTP_GET,
+        .handler = status_get
     };
     const httpd_uri_t save = {
         .uri = "/save",
@@ -492,6 +554,8 @@ static bool start_http_portal(void)
         .handler = portal_ota
     };
     if (httpd_register_uri_handler(s_httpd, &root) != ESP_OK ||
+        httpd_register_uri_handler(s_httpd, &setup_page) != ESP_OK ||
+        httpd_register_uri_handler(s_httpd, &status_page) != ESP_OK ||
         httpd_register_uri_handler(s_httpd, &save) != ESP_OK ||
         httpd_register_uri_handler(s_httpd, &ota) != ESP_OK) {
         httpd_stop(s_httpd);
@@ -502,6 +566,8 @@ static bool start_http_portal(void)
     /* Jede unbekannte Adresse landet auf dem Formular. Zusammen mit dem
        DNS-Umleiter ergibt das das gewohnte Verhalten: WLAN auswaehlen,
        Anmeldeseite oeffnet sich von allein. */
+    /* Nur waehrend der Einrichtung umleiten; im Heimnetz soll ein Tippfehler
+       ein ehrliches 404 liefern statt endlos aufs Dashboard zu springen. */
     httpd_register_err_handler(s_httpd, HTTPD_404_NOT_FOUND, portal_redirect);
     if (!s_dns_task)
         xTaskCreate(dns_task, "bm24dns", 3072, NULL, 4, &s_dns_task);

@@ -75,6 +75,45 @@ static uint8_t smart_sw_duty(float temperature, uint8_t current)
     return current;
 }
 
+/* Letzte Sekundenwerte fuer das Web-Dashboard. Sie werden im Supervisor
+   ohnehin berechnet; hier landen sie in einer kleinen Ablage, damit der
+   Webserver sie ohne Zugriff auf Miner und Pool ausliefern kann. */
+static struct {
+    double khs;
+    float temperature;
+    uint64_t uptime;
+} s_live;
+
+static void dashboard_status(char *json, size_t capacity)
+{
+    bm24_miner_stats miner;
+    bm24_pool_stats pool;
+    bm24_metrics_snapshot metrics;
+    bm24_miner_get_stats(&miner);
+    bm24_pool_get_stats(&pool);
+    bm24_metrics_get(&metrics);
+
+    double best = pool.best_difficulty;
+    if (metrics.pool_stats_valid && metrics.pool_best_difficulty > best)
+        best = metrics.pool_best_difficulty;
+
+    uint64_t up = s_live.uptime;
+    char uptime[24];
+    snprintf(uptime, sizeof(uptime), "%ud %02uh %02um",
+             (unsigned)(up / 86400), (unsigned)((up / 3600) % 24),
+             (unsigned)((up / 60) % 60));
+
+    const esp_app_desc_t *app = esp_app_get_description();
+    snprintf(json, capacity,
+             "{\"khs\":%.1f,\"temp\":%.1f,\"accepted\":%" PRIu64
+             ",\"submitted\":%" PRIu64 ",\"best\":%.8f,\"pool\":%s"
+             ",\"uptime\":\"%s\",\"workers\":%u,\"version\":\"%s\"}",
+             s_live.khs, s_live.temperature, pool.accepted, pool.submitted,
+             best, pool.connected ? "true" : "false", uptime,
+             (unsigned)(metrics.pool_stats_valid ? metrics.pool_workers : 1),
+             app->version);
+}
+
 static void supervisor_task(void *arg)
 {
     (void)arg;
@@ -137,6 +176,10 @@ static void supervisor_task(void *arg)
             ESP_LOGE(TAG, "SHA-Mismatch erkannt, fail closed");
             bm24_miner_clear_job();
         }
+
+        s_live.khs = (hw_rate + sw_rate) / 1000.0;
+        s_live.temperature = temperature;
+        s_live.uptime = (uint64_t)(esp_timer_get_time() / 1000000);
 
         bm24_ui_state ui = {
             .hw_khs = hw_rate / 1000.0,
@@ -211,6 +254,7 @@ void app_main(void)
     bm24_network_get_status(&network);
     if (!connected && !network.portal_active)
         fatal_boot("WLAN/SETUP INIT", pending_verify);
+    bm24_network_set_status_provider(dashboard_status);
     if (!bm24_ui_start())
         fatal_boot("UI TASK", pending_verify);
 
