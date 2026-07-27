@@ -20,6 +20,7 @@
 
 #include "bm24_config.h"
 #include "bm24_display.h"
+#include "bm24_metrics.h"
 #include "bm24_miner.h"
 #include "bm24_network.h"
 #include "bm24_pool.h"
@@ -221,6 +222,10 @@ void app_main(void)
             fatal_boot("OTA VALIDIERUNG", true);
         ESP_LOGI(TAG, "OTA-Image nach Selbsttests als gueltig markiert");
     }
+
+    /* Pool-seitige Statistik braucht Host und Adresse; sie zeigt auch
+       weitere Miner auf derselben Adresse und die Bestmarke des Pools. */
+    bm24_metrics_set_pool(config.pool_host, config.worker);
 
     if (provisioned && !bm24_pool_start(&config))
         fatal_boot("POOL TASK", false);

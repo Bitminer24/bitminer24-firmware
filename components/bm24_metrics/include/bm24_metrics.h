@@ -27,6 +27,14 @@ typedef struct {
     double network_difficulty_t;
     double retarget_change;
     double jackpot_eur;
+    /* Pool-seitige Sicht auf die eigene Adresse. In 1.x war das die Zahl,
+       an der Besitzer ihr Geraet gemessen haben; sie umfasst auch weitere
+       Miner auf derselben Adresse und die beste je erreichte Difficulty,
+       die einen Neustart ueberlebt. */
+    bool pool_stats_valid;
+    uint32_t pool_workers;
+    double pool_worker_hash;      /* Summe aller Worker, H/s */
+    double pool_best_difficulty;  /* pool-seitige Bestmarke  */
     uint64_t successful_requests;
     uint64_t failed_requests;
 } bm24_metrics_snapshot;
@@ -34,6 +42,10 @@ typedef struct {
 /* Hintergrundabrufe fuer die Informationsseiten. Jeder HTTPS-Abruf ist
    zeitlich getrennt und gibt dem SHA-Werk nur fuer den TLS-Aufruf frei. */
 bool bm24_metrics_start(void);
+
+/* Pool und Arbeiteradresse fuer die Statistikabfrage setzen. Ohne Aufruf
+   bleibt die Pool-Statistik einfach aus. */
+void bm24_metrics_set_pool(const char *host, const char *worker);
 void bm24_metrics_get(bm24_metrics_snapshot *out);
 
 #ifdef __cplusplus

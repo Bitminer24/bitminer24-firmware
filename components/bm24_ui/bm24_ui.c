@@ -1,5 +1,8 @@
 #include "bm24_ui.h"
 
+#include "esp_system.h"
+
+#include "bm24_config.h"
 #include "bm24_media.h"
 
 #include <inttypes.h>
@@ -23,6 +26,11 @@
 #define DEBOUNCE_TICKS 3u
 #define DOUBLE_MS      400u
 #define LONG_MS        4000u
+/* Noch laenger gehalten setzt das Geraet auf Werkszustand zurueck. In 1.x
+   lag das auf demselben Knopf; ohne diesen Weg kommt niemand mehr sauber
+   von einem alten WLAN oder einer fremden Adresse los. Die Anzeige warnt
+   ab vier Sekunden, damit es nicht versehentlich passiert. */
+#define RESET_MS       10000u
 
 typedef struct {
     bool raw_pressed;
@@ -110,11 +118,29 @@ static void miner_page(const bm24_ui_state *state,
     snprintf(frame->line[3], sizeof(frame->line[3]),
              "TEMP %.1f C / DUTY %u%%", state->temperature_c,
              (unsigned)state->miner.sw_duty_percent);
+    /* Beste Difficulty bevorzugt vom Pool: sie umfasst alle Miner auf der
+       Adresse und ueberlebt einen Neustart, waehrend der lokale Wert bei
+       jedem Start bei null beginnt. */
+    bm24_metrics_snapshot pool_metrics;
+    bm24_metrics_get(&pool_metrics);
     char best[20];
-    format_difficulty(state->pool.best_difficulty, best, sizeof(best));
-    snprintf(frame->line[4], sizeof(frame->line[4]),
-             "SHARES %" PRIu64 "/%" PRIu64 " / BEST %s",
-             state->pool.accepted, state->pool.submitted, best);
+    format_difficulty(pool_metrics.pool_stats_valid &&
+                          pool_metrics.pool_best_difficulty >
+                              state->pool.best_difficulty
+                          ? pool_metrics.pool_best_difficulty
+                          : state->pool.best_difficulty,
+                      best, sizeof(best));
+    if (pool_metrics.pool_stats_valid && pool_metrics.pool_workers > 1)
+        snprintf(frame->line[4], sizeof(frame->line[4]),
+                 "SHARES %" PRIu64 " / BEST %s / %uW",
+                 (uint64_t)(state->pool.accepted > 99999 ? 99999
+                                                        : state->pool.accepted),
+                 best, (unsigned)(pool_metrics.pool_workers > 99
+                                      ? 99 : pool_metrics.pool_workers));
+    else
+        snprintf(frame->line[4], sizeof(frame->line[4]),
+                 "SHARES %" PRIu64 "/%" PRIu64 " / BEST %s",
+                 state->pool.accepted, state->pool.submitted, best);
     char uptime[24];
     format_uptime(state->uptime_seconds, uptime, sizeof(uptime));
     snprintf(frame->line[5], sizeof(frame->line[5]),
@@ -318,11 +344,33 @@ static void button_task(void *arg)
                          (unsigned)PAGE_COUNT);
             }
         }
-        if (page.stable_pressed && !page.long_fired &&
-            (uint32_t)(now - page.pressed_at) >= LONG_MS) {
-            page.long_fired = true;
-            if (bm24_network_open_portal())
-                ESP_LOGW(TAG, "Setup-Portal per Langdruck geoeffnet");
+        if (page.stable_pressed) {
+            uint32_t held = (uint32_t)(now - page.pressed_at);
+            if (!page.long_fired && held >= LONG_MS) {
+                page.long_fired = true;
+                if (bm24_network_open_portal())
+                    ESP_LOGW(TAG, "Setup-Portal per Langdruck geoeffnet");
+            }
+            if (page.long_fired && held >= LONG_MS && held < RESET_MS) {
+                /* Ruecklauf sichtbar machen, solange der Knopf gehalten wird */
+                bm24_display_frame warn = {0};
+                snprintf(warn.line[0], sizeof(warn.line[0]), "WERKSRESET");
+                snprintf(warn.line[1], sizeof(warn.line[1]), "IN %u S",
+                         (unsigned)((RESET_MS - held + 999u) / 1000u));
+                snprintf(warn.line[3], sizeof(warn.line[3]),
+                         "LOSLASSEN BRICHT AB");
+                bm24_display_set(&warn);
+            }
+            if (held >= RESET_MS) {
+                ESP_LOGW(TAG, "Werksreset ausgeloest");
+                bm24_display_frame done = {0};
+                snprintf(done.line[0], sizeof(done.line[0]), "WERKSRESET");
+                snprintf(done.line[2], sizeof(done.line[2]), "NEUSTART");
+                bm24_display_set(&done);
+                bm24_config_erase();
+                vTaskDelay(pdMS_TO_TICKS(1500));
+                esp_restart();
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }

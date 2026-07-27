@@ -30,3 +30,11 @@ CONFIG_MBEDTLS_HAVE_TIME_DATE=y
 # Produktbetrieb: Der Supervisor aktiviert und fuettert den Task-Watchdog
 # gezielt. Idle-Tasks bleiben draussen, weil SHA absichtlich dauernd rechnet.
 CONFIG_ESP_TASK_WDT_INIT=n
+
+# Absturzdiagnose: bei einem Panic wird ein auswertbarer Speicherauszug in
+# die coredump-Partition geschrieben. Ohne das weiss man bei einem
+# Kundengeraet nur, DASS es neu gestartet ist, nicht warum.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=32

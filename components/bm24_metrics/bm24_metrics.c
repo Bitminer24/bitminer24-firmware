@@ -27,6 +27,7 @@ typedef enum {
     ENDPOINT_HEIGHT,
     ENDPOINT_RETARGET,
     ENDPOINT_SOLO,
+    ENDPOINT_POOL,
     ENDPOINT_COUNT
 } endpoint_id;
 
@@ -51,7 +52,9 @@ static const char *URLS[ENDPOINT_COUNT] = {
     [ENDPOINT_RETARGET] =
         "https://mempool.space/api/v1/difficulty-adjustment",
     [ENDPOINT_SOLO] =
-        "https://bitminer24-solo-tracker.proud-dawn-de10.workers.dev"
+        "https://bitminer24-solo-tracker.proud-dawn-de10.workers.dev",
+    /* zur Laufzeit aus Pool und Adresse gebaut, siehe s_pool_url */
+    [ENDPOINT_POOL] = NULL
 };
 static const uint32_t INTERVAL_MS[ENDPOINT_COUNT] = {
     [ENDPOINT_PRICE] = 300000u,
@@ -59,8 +62,18 @@ static const uint32_t INTERVAL_MS[ENDPOINT_COUNT] = {
     [ENDPOINT_FEES] = 300000u,
     [ENDPOINT_HEIGHT] = 120000u,
     [ENDPOINT_RETARGET] = 600000u,
-    [ENDPOINT_SOLO] = 1800000u
+    [ENDPOINT_SOLO] = 1800000u,
+    [ENDPOINT_POOL] = 60000u
 };
+
+/* Bekannte Solo-Pools und ihre Statistik-Schnittstelle. Ohne Treffer bleibt
+   die Abfrage aus, statt auf gut Glueck eine fremde URL anzusprechen. */
+static const struct { const char *host; const char *api; } POOL_APIS[] = {
+    { "public-pool.io",       "https://public-pool.io:40557/api/client/" },
+    { "pool.nerdminers.org",  "https://pool.nerdminers.org/api/client/"  },
+    { "nerdminers.org",       "https://pool.nerdminers.org/api/client/"  },
+};
+static char s_pool_url[192];
 
 static char s_response[RESPONSE_CAPACITY];
 static bm24_metrics_snapshot s_snapshot;
@@ -130,11 +143,71 @@ static bool http_get(const char *url, size_t *length)
     return true;
 }
 
+void bm24_metrics_set_pool(const char *host, const char *worker)
+{
+    s_pool_url[0] = 0;
+    if (!host || !worker || !worker[0])
+        return;
+    /* Nur die Adresse zaehlt, ein angehaengter Workername gehoert nicht
+       in die URL (1.x schnitt am Punkt ab). */
+    char address[96];
+    strlcpy(address, worker, sizeof(address));
+    char *dot = strchr(address, 0x2E);
+    if (dot)
+        *dot = 0;
+
+    for (size_t i = 0; i < sizeof(POOL_APIS) / sizeof(POOL_APIS[0]); ++i) {
+        if (strstr(host, POOL_APIS[i].host)) {
+            snprintf(s_pool_url, sizeof(s_pool_url), "%s%s",
+                     POOL_APIS[i].api, address);
+            ESP_LOGI(TAG, "Pool-Statistik: %s", s_pool_url);
+            return;
+        }
+    }
+    ESP_LOGW(TAG, "Pool %s hat keine bekannte Statistik-Schnittstelle", host);
+}
+
 static cJSON *number_item(const cJSON *object, const char *name)
 {
     cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
     return cJSON_IsNumber(item) ? item : NULL;
 }
+
+static bool parse_pool_stats(size_t length)
+{
+    cJSON *root = cJSON_ParseWithLength(s_response, length);
+    if (!root)
+        return false;
+
+    uint32_t workers = 0;
+    double total_hash = 0.0, best = 0.0;
+    const cJSON *item = number_item(root, "workersCount");
+    if (item)
+        workers = (uint32_t)item->valuedouble;
+    item = number_item(root, "bestDifficulty");
+    if (item)
+        best = item->valuedouble;
+
+    const cJSON *list = cJSON_GetObjectItemCaseSensitive(root, "workers");
+    if (cJSON_IsArray(list)) {
+        const cJSON *entry = NULL;
+        cJSON_ArrayForEach(entry, list) {
+            const cJSON *rate = number_item(entry, "hashRate");
+            if (rate)
+                total_hash += rate->valuedouble;
+        }
+    }
+    cJSON_Delete(root);
+
+    portENTER_CRITICAL(&s_lock);
+    s_snapshot.pool_workers = workers;
+    s_snapshot.pool_worker_hash = total_hash;
+    s_snapshot.pool_best_difficulty = best;
+    s_snapshot.pool_stats_valid = true;
+    portEXIT_CRITICAL(&s_lock);
+    return true;
+}
+
 
 static bool parse_price(size_t length)
 {
@@ -262,8 +335,14 @@ static bool parse_solo(size_t length)
 
 static bool fetch_endpoint(endpoint_id endpoint)
 {
+    /* Die Pool-URL steht erst nach der Provisionierung fest. Solange sie
+       fehlt, wird der Abruf uebersprungen statt zu scheitern. */
+    const char *url = (endpoint == ENDPOINT_POOL) ? s_pool_url : URLS[endpoint];
+    if (!url || !url[0])
+        return false;
+
     size_t length;
-    if (!http_get(URLS[endpoint], &length))
+    if (!http_get(url, &length))
         return false;
     switch (endpoint) {
     case ENDPOINT_PRICE:    return parse_price(length);
@@ -272,6 +351,7 @@ static bool fetch_endpoint(endpoint_id endpoint)
     case ENDPOINT_HEIGHT:   return parse_height(length);
     case ENDPOINT_RETARGET: return parse_retarget(length);
     case ENDPOINT_SOLO:     return parse_solo(length);
+    case ENDPOINT_POOL:     return parse_pool_stats(length);
     default:                return false;
     }
 }
