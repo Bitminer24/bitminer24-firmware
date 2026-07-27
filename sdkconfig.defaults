@@ -17,3 +17,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # Konsole auf USB-Serial-JTAG (T-Display S3 haengt direkt am USB)
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Release-Optimierung statt -Og; der Kernel selbst steht per Pragma auf -O3,
+# aber alles drumherum (memcpy, FreeRTOS-Pfade) soll nicht Debug sein
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# Pruefstand: Task-Watchdog aus, die Bench-Tasks laufen bewusst ohne Pause
+CONFIG_ESP_TASK_WDT_INIT=n

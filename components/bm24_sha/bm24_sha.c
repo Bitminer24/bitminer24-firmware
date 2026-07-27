@@ -5,7 +5,7 @@
 /* Kompression nach FIPS 180-4. Eine Schleife statt Unrolling: dieser Pfad
    ist Referenz und Selbsttest, nicht der Miner. */
 
-static const uint32_t K[64] = {
+static const uint32_t BM24REF_K[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
     0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
     0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
@@ -19,12 +19,12 @@ static const uint32_t K[64] = {
     0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 };
 
-static const uint32_t IV[8] = {
+static const uint32_t BM24REF_IV[8] = {
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
     0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
 };
 
-#define ROTR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
+#define BM24REF_ROTR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
 
 static uint32_t load_be32(const uint8_t *p)
 {
@@ -45,8 +45,8 @@ static void compress(uint32_t state[8], const uint32_t w_in[16])
     uint32_t w[64];
     memcpy(w, w_in, 16 * sizeof(uint32_t));
     for (int t = 16; t < 64; ++t) {
-        uint32_t s0 = ROTR(w[t - 15], 7) ^ ROTR(w[t - 15], 18) ^ (w[t - 15] >> 3);
-        uint32_t s1 = ROTR(w[t - 2], 17) ^ ROTR(w[t - 2], 19) ^ (w[t - 2] >> 10);
+        uint32_t s0 = BM24REF_ROTR(w[t - 15], 7) ^ BM24REF_ROTR(w[t - 15], 18) ^ (w[t - 15] >> 3);
+        uint32_t s1 = BM24REF_ROTR(w[t - 2], 17) ^ BM24REF_ROTR(w[t - 2], 19) ^ (w[t - 2] >> 10);
         w[t] = w[t - 16] + s0 + w[t - 7] + s1;
     }
 
@@ -54,10 +54,10 @@ static void compress(uint32_t state[8], const uint32_t w_in[16])
     uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
 
     for (int t = 0; t < 64; ++t) {
-        uint32_t S1  = ROTR(e, 6) ^ ROTR(e, 11) ^ ROTR(e, 25);
+        uint32_t S1  = BM24REF_ROTR(e, 6) ^ BM24REF_ROTR(e, 11) ^ BM24REF_ROTR(e, 25);
         uint32_t ch  = (e & f) ^ (~e & g);
-        uint32_t t1  = h + S1 + ch + K[t] + w[t];
-        uint32_t S0  = ROTR(a, 2) ^ ROTR(a, 13) ^ ROTR(a, 22);
+        uint32_t t1  = h + S1 + ch + BM24REF_K[t] + w[t];
+        uint32_t S0  = BM24REF_ROTR(a, 2) ^ BM24REF_ROTR(a, 13) ^ BM24REF_ROTR(a, 22);
         uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
         uint32_t t2  = S0 + maj;
         h = g; g = f; f = e; e = d + t1;
@@ -71,7 +71,7 @@ static void compress(uint32_t state[8], const uint32_t w_in[16])
 void bm24_sha256(const uint8_t *data, size_t len, uint8_t out[32])
 {
     uint32_t state[8];
-    memcpy(state, IV, sizeof(IV));
+    memcpy(state, BM24REF_IV, sizeof(BM24REF_IV));
 
     size_t full = len / 64;
     for (size_t i = 0; i < full; ++i) {
@@ -112,7 +112,7 @@ void bm24_double_sha(const uint8_t *data, size_t len, uint8_t out[32])
 void bm24_sha_midstate(const uint8_t header64[64], uint32_t state[8])
 {
     uint32_t w[16];
-    memcpy(state, IV, sizeof(IV));
+    memcpy(state, BM24REF_IV, sizeof(BM24REF_IV));
     for (int j = 0; j < 16; ++j)
         w[j] = load_be32(header64 + j * 4);
     compress(state, w);
@@ -151,7 +151,7 @@ void bm24_double_sha_from_midstate(const uint32_t state_in[8],
     w2[15] = 256;
 
     uint32_t st2[8];
-    memcpy(st2, IV, sizeof(IV));
+    memcpy(st2, BM24REF_IV, sizeof(BM24REF_IV));
     compress(st2, w2);
 
     for (int i = 0; i < 8; ++i)
