@@ -105,136 +105,136 @@ static void format_clock(bool synced, char *out, size_t capacity)
     strftime(out, capacity, "%H:%M", &local);
 }
 
+/* Koordinaten aus der vermessenen 1.x-Anzeige. Die Grafiken tragen ihre
+   Beschriftungen im Bild, hier stehen nur noch die Werte an der Stelle,
+   an der im Bild ihr Kaestchen ist. x ist bei right = true die rechte
+   Kante des Kaestchens. */
 static void miner_page(const bm24_ui_state *state,
                        bm24_display_frame *frame)
 {
-    frame->style = BM24_DISPLAY_STYLE_BIG_VALUE;
     frame->background = bm24_img_miner;
-    strlcpy(frame->line[0], "MINER 1/5", sizeof(frame->line[0]));
-    format_rate(state->hw_khs + state->sw_khs, frame->line[1],
-                sizeof(frame->line[1]));
-    snprintf(frame->line[2], sizeof(frame->line[2]),
-             "HW %.1f / SW %.1f", state->hw_khs, state->sw_khs);
-    snprintf(frame->line[3], sizeof(frame->line[3]),
-             "TEMP %.1f C / DUTY %u%%", state->temperature_c,
-             (unsigned)state->miner.sw_duty_percent);
-    /* Beste Difficulty bevorzugt vom Pool: sie umfasst alle Miner auf der
-       Adresse und ueberlebt einen Neustart, waehrend der lokale Wert bei
-       jedem Start bei null beginnt. */
-    bm24_metrics_snapshot pool_metrics;
-    bm24_metrics_get(&pool_metrics);
-    char best[20];
-    format_difficulty(pool_metrics.pool_stats_valid &&
-                          pool_metrics.pool_best_difficulty >
-                              state->pool.best_difficulty
-                          ? pool_metrics.pool_best_difficulty
-                          : state->pool.best_difficulty,
-                      best, sizeof(best));
-    if (pool_metrics.pool_stats_valid && pool_metrics.pool_workers > 1)
-        snprintf(frame->line[4], sizeof(frame->line[4]),
-                 "SHARES %" PRIu64 " / BEST %s / %uW",
-                 (uint64_t)(state->pool.accepted > 99999 ? 99999
-                                                        : state->pool.accepted),
-                 best, (unsigned)(pool_metrics.pool_workers > 99
-                                      ? 99 : pool_metrics.pool_workers));
-    else
-        snprintf(frame->line[4], sizeof(frame->line[4]),
-                 "SHARES %" PRIu64 "/%" PRIu64 " / BEST %s",
-                 state->pool.accepted, state->pool.submitted, best);
-    char uptime[24];
-    format_uptime(state->uptime_seconds, uptime, sizeof(uptime));
-    snprintf(frame->line[5], sizeof(frame->line[5]),
-             "%s | JOB %" PRIu32 " | %s", uptime,
-             state->pool.active_job_tag,
-             state->pool.connected ? "POOL ONLINE" : "POOL WARTET");
+    frame->slot_count = 6;
+
+    /* grosse Hashrate links, darunter die Gesamtzahl */
+    frame->slot[0] = (bm24_display_slot){126, 84, 3, true};
+    format_rate(state->hw_khs + state->sw_khs, frame->line[0],
+                sizeof(frame->line[0]));
+
+    frame->slot[1] = (bm24_display_slot){150, 141, 2, true};
+    snprintf(frame->line[1], sizeof(frame->line[1]), "%.1f C",
+             state->temperature_c);
+
+    /* rechte Spalte: gleiche Reihenfolge wie in 1.x */
+    frame->slot[2] = (bm24_display_slot){313, 33, 2, true};
+    snprintf(frame->line[2], sizeof(frame->line[2]), "%" PRIu32,
+             state->pool.active_job_tag);
+
+    bm24_metrics_snapshot metrics;
+    bm24_metrics_get(&metrics);
+    double best = state->pool.best_difficulty;
+    if (metrics.pool_stats_valid && metrics.pool_best_difficulty > best)
+        best = metrics.pool_best_difficulty;
+
+    frame->slot[3] = (bm24_display_slot){313, 78, 2, true};
+    format_difficulty(best, frame->line[3], sizeof(frame->line[3]));
+
+    frame->slot[4] = (bm24_display_slot){313, 93, 2, true};
+    snprintf(frame->line[4], sizeof(frame->line[4]), "%" PRIu64,
+             state->pool.accepted);
+
+    frame->slot[5] = (bm24_display_slot){313, 123, 2, true};
+    format_uptime(state->uptime_seconds, frame->line[5],
+                  sizeof(frame->line[5]));
 }
 
 static void clock_page(const bm24_ui_state *state,
                        const bm24_metrics_snapshot *metrics,
                        bm24_display_frame *frame)
 {
-    frame->style = BM24_DISPLAY_STYLE_BIG_VALUE;
     frame->background = bm24_img_clock;
-    strlcpy(frame->line[0], "UHR / BLOCK 2/5", sizeof(frame->line[0]));
-    format_clock(metrics->time_synced, frame->line[1],
-                 sizeof(frame->line[1]));
-    char block[24] = "-";
-    char price[24] = "-";
-    if (metrics->block_height)
-        bm24_thousands(metrics->block_height, block, sizeof(block));
+    frame->slot_count = 4;
+
+    frame->slot[0] = (bm24_display_slot){140, 80, 3, true};
+    format_clock(metrics->time_synced, frame->line[0],
+                 sizeof(frame->line[0]));
+
+    frame->slot[1] = (bm24_display_slot){306, 68, 2, true};
+    if (metrics->chain_valid)
+        snprintf(frame->line[1], sizeof(frame->line[1]), "%" PRIu32,
+                 metrics->block_height);
+    else
+        strlcpy(frame->line[1], "-", sizeof(frame->line[1]));
+
+    frame->slot[2] = (bm24_display_slot){306, 142, 2, true};
     if (metrics->price_valid)
-        bm24_thousands(metrics->btc_usd, price, sizeof(price));
-    snprintf(frame->line[2], sizeof(frame->line[2]), "BLOCK #%s", block);
-    snprintf(frame->line[3], sizeof(frame->line[3]), "BITCOIN $%s", price);
-    char rate[24];
-    format_rate(state->hw_khs + state->sw_khs, rate, sizeof(rate));
-    snprintf(frame->line[4], sizeof(frame->line[4]), "MINER %s", rate);
-    snprintf(frame->line[5], sizeof(frame->line[5]),
-             "WIFI %d DBM | SHARES %" PRIu64 "/%" PRIu64,
-             (int)state->network.rssi,
-             state->pool.accepted, state->pool.submitted);
+        snprintf(frame->line[2], sizeof(frame->line[2]), "%.0f",
+                 metrics->btc_usd);
+    else
+        strlcpy(frame->line[2], "-", sizeof(frame->line[2]));
+
+    frame->slot[3] = (bm24_display_slot){140, 142, 2, true};
+    format_rate(state->hw_khs + state->sw_khs, frame->line[3],
+                sizeof(frame->line[3]));
 }
 
 static void network_page(const bm24_metrics_snapshot *metrics,
                          bm24_display_frame *frame)
 {
-    frame->style = BM24_DISPLAY_STYLE_DASHBOARD;
     frame->background = bm24_img_network;
-    strlcpy(frame->line[0], "BITCOIN NETZ 3/5", sizeof(frame->line[0]));
-    char block[24] = "-";
-    char halving[24] = "-";
-    if (metrics->block_height)
-        bm24_thousands(metrics->block_height, block, sizeof(block));
-    if (metrics->halving_blocks)
-        bm24_thousands(metrics->halving_blocks, halving, sizeof(halving));
-    snprintf(frame->line[1], sizeof(frame->line[1]), "BLOCK #%s", block);
-    if (metrics->global_hash_eh > 0.0)
-        snprintf(frame->line[2], sizeof(frame->line[2]),
-                 "HASH %.1f EH/S", metrics->global_hash_eh);
+    frame->slot_count = 5;
+
+    frame->slot[0] = (bm24_display_slot){306, 56, 2, true};
+    if (metrics->chain_valid)
+        snprintf(frame->line[0], sizeof(frame->line[0]), "%" PRIu32,
+                 metrics->block_height);
     else
-        strlcpy(frame->line[2], "HASH WIRD GELADEN",
-                sizeof(frame->line[2]));
-    if (metrics->network_difficulty_t > 0.0)
-        snprintf(frame->line[3], sizeof(frame->line[3]),
-                 "DIFF %.2f T", metrics->network_difficulty_t);
-    else
-        strlcpy(frame->line[3], "DIFF WIRD GELADEN",
-                sizeof(frame->line[3]));
-    if (metrics->half_hour_fee)
-        snprintf(frame->line[4], sizeof(frame->line[4]),
-                 "FEE %u SAT/VB", (unsigned)metrics->half_hour_fee);
-    else
-        strlcpy(frame->line[4], "FEE WIRD GELADEN",
-                sizeof(frame->line[4]));
-    char change[16];
-    format_percent(metrics->retarget_change, change, sizeof(change));
-    snprintf(frame->line[5], sizeof(frame->line[5]),
-             "HALV %.10s | RET %u %.8s",
-             halving, (unsigned)metrics->retarget_blocks, change);
+        strlcpy(frame->line[0], "-", sizeof(frame->line[0]));
+
+    frame->slot[1] = (bm24_display_slot){142, 90, 2, true};
+    snprintf(frame->line[1], sizeof(frame->line[1]), "%" PRIu32,
+             metrics->retarget_blocks);
+
+    frame->slot[2] = (bm24_display_slot){128, 134, 2, true};
+    snprintf(frame->line[2], sizeof(frame->line[2]), "%.0f",
+             metrics->global_hash_eh);
+
+    frame->slot[3] = (bm24_display_slot){282, 116, 2, true};
+    snprintf(frame->line[3], sizeof(frame->line[3]), "%" PRIu32,
+             metrics->half_hour_fee);
+
+    frame->slot[4] = (bm24_display_slot){306, 142, 2, true};
+    snprintf(frame->line[4], sizeof(frame->line[4]), "%.0fT",
+             metrics->network_difficulty_t);
 }
 
 static void price_page(const bm24_ui_state *state,
                        const bm24_metrics_snapshot *metrics,
                        bm24_display_frame *frame)
 {
-    frame->style = BM24_DISPLAY_STYLE_BIG_VALUE;
     frame->background = bm24_img_price;
-    strlcpy(frame->line[0], "BITCOIN PREIS 4/5", sizeof(frame->line[0]));
-    char price[24] = "-";
-    char block[24] = "-";
+    frame->slot_count = 4;
+
+    frame->slot[0] = (bm24_display_slot){300, 62, 4, true};
     if (metrics->price_valid)
-        bm24_thousands(metrics->btc_usd, price, sizeof(price));
-    if (metrics->block_height)
-        bm24_thousands(metrics->block_height, block, sizeof(block));
-    snprintf(frame->line[1], sizeof(frame->line[1]), "$%s", price);
-    snprintf(frame->line[2], sizeof(frame->line[2]), "BLOCK #%s", block);
-    snprintf(frame->line[3], sizeof(frame->line[3]),
-             "MEDIUM FEE %u SAT/VB", (unsigned)metrics->half_hour_fee);
-    char rate[24];
-    format_rate(state->hw_khs + state->sw_khs, rate, sizeof(rate));
-    snprintf(frame->line[4], sizeof(frame->line[4]), "MINER %s", rate);
-    format_clock(metrics->time_synced, frame->line[5],
-                 sizeof(frame->line[5]));
+        bm24_thousands(metrics->btc_usd, frame->line[0],
+                       sizeof(frame->line[0]));
+    else
+        strlcpy(frame->line[0], "-", sizeof(frame->line[0]));
+
+    frame->slot[1] = (bm24_display_slot){90, 144, 2, true};
+    format_rate(state->hw_khs + state->sw_khs, frame->line[1],
+                sizeof(frame->line[1]));
+
+    frame->slot[2] = (bm24_display_slot){198, 144, 2, true};
+    if (metrics->chain_valid)
+        snprintf(frame->line[2], sizeof(frame->line[2]), "%" PRIu32,
+                 metrics->block_height);
+    else
+        strlcpy(frame->line[2], "-", sizeof(frame->line[2]));
+
+    frame->slot[3] = (bm24_display_slot){306, 144, 2, true};
+    format_clock(metrics->time_synced, frame->line[3],
+                 sizeof(frame->line[3]));
 }
 
 static void solo_page(const bm24_metrics_snapshot *metrics,

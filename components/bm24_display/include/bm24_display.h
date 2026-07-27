@@ -17,8 +17,23 @@ typedef enum {
     BM24_DISPLAY_STYLE_DASHBOARD
 } bm24_display_style;
 
+/* Freie Platzierung eines Wertes. Die Hintergrundgrafiken tragen ihre
+   Beschriftungen bereits im Bild; die Werte muessen deshalb in deren
+   Kaestchen sitzen statt auf festen Zeilen. x ist bei right = true die
+   RECHTE Kante, wie in der 1.x-Vorlage. */
+typedef struct {
+    int16_t x;
+    int16_t y;
+    uint8_t scale;
+    bool right;
+} bm24_display_slot;
+
 typedef struct {
     bm24_display_style style;
+    /* Sind Plaetze gesetzt (slot_count > 0), gelten sie statt der
+       Standardzeilen. */
+    bm24_display_slot slot[BM24_DISPLAY_LINES];
+    uint8_t slot_count;
     /* Optionale Hintergrundgrafik (320x170 RGB565, im Flash). NULL laesst
        es bei der einfarbigen Flaeche. Siehe bm24_media. */
     const uint16_t *background;

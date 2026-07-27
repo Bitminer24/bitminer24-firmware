@@ -43,6 +43,9 @@
 #define COLOR_WHITE  RGB565(235, 242, 250)
 #define COLOR_BLUE   RGB565(90, 190, 255)
 #define COLOR_GREEN  RGB565(80, 220, 130)
+/* Wertefarbe der 1.x-Vorlage (0xEF5D), damit die Zahlen auf den
+   Hintergrundgrafiken denselben Kontrast haben wie auf dem alten Geraet. */
+#define COLOR_VALUE  0xEF5D
 
 typedef struct {
     uint8_t command;
@@ -264,6 +267,60 @@ static void draw_text(int y, const char *text, uint8_t scale,
     push_band(y, height);
 }
 
+/* Einen Wert in ein Zeilenband zeichnen, soweit er hineinragt. Dadurch
+   koennen mehrere Werte auf gleicher Hoehe stehen, ohne sich gegenseitig
+   zu ueberschreiben — jedes Band wird einmal gefuellt und einmal gesendet. */
+static void draw_slot_band(const char *text, const bm24_display_slot *slot,
+                           uint16_t color, int band_y, int band_h)
+{
+    if (!text || !text[0] || slot->scale == 0)
+        return;
+    int scale = slot->scale;
+    int width = (int)strlen(text) * 6 * scale;
+    int x0 = slot->right ? slot->x - width : slot->x;
+
+    for (const char *p = text; *p; ++p, x0 += 6 * scale) {
+        if (x0 + 5 * scale <= 0 || x0 >= LCD_WIDTH)
+            continue;
+        uint8_t scratch[7];
+        const uint8_t *rows = glyph(*p, scratch);
+        for (int row = 0; row < 7; ++row) {
+            for (int sy = 0; sy < scale; ++sy) {
+                int py = slot->y + row * scale + sy;
+                if (py < band_y || py >= band_y + band_h)
+                    continue;
+                uint16_t *line = s_pixels + (py - band_y) * LCD_WIDTH;
+                for (int col = 0; col < 5; ++col) {
+                    if (!(rows[row] & (1u << (4 - col))))
+                        continue;
+                    for (int sx = 0; sx < scale; ++sx) {
+                        int px = x0 + col * scale + sx;
+                        if (px >= 0 && px < LCD_WIDTH)
+                            line[px] = color;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* Bild und alle Werte bandweise zusammensetzen. Es wird nie eine leere
+   Flaeche gesendet, deshalb bleibt die Anzeige beim Aktualisieren ruhig. */
+static void render_slots(const bm24_display_frame *frame)
+{
+    for (int y = 0; y < LCD_HEIGHT; y += LCD_BAND_HEIGHT) {
+        int height = LCD_HEIGHT - y;
+        if (height > LCD_BAND_HEIGHT)
+            height = LCD_BAND_HEIGHT;
+        fill_background(y, height);
+        for (uint8_t i = 0; i < frame->slot_count; ++i)
+            draw_slot_band(frame->line[i], &frame->slot[i], COLOR_VALUE,
+                           y, height);
+        if (!push_band(y, height))
+            return;
+    }
+}
+
 static void render_task(void *arg)
 {
     (void)arg;
@@ -282,10 +339,13 @@ static void render_task(void *arg)
            gezeichnet — das kam als staendiges Flackern an. Die Werte
            liegen ohnehin in Zeilenbaendern, die ihren Hintergrund selbst
            mitbringen, also genuegt es, diese Baender zu erneuern. */
-        bool background_changed = (s_background != frame.background);
         s_background = frame.background;
-        if (background_changed)
-            clear_screen();
+        if (frame.slot_count) {
+            render_slots(&frame);
+            xSemaphoreGive(s_panel_lock);
+            continue;
+        }
+        clear_screen();
         if (frame.style == BM24_DISPLAY_STYLE_BIG_VALUE) {
             draw_text(4, frame.line[0], 2, COLOR_ORANGE);
             draw_text(34, frame.line[1], 4, COLOR_WHITE);
