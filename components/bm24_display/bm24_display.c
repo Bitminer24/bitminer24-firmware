@@ -277,8 +277,15 @@ static void render_task(void *arg)
 
         if (xSemaphoreTake(s_panel_lock, pdMS_TO_TICKS(500)) != pdTRUE)
             continue;
+        /* Nur bei einem Wechsel der Grafik das ganze Bild neu aufbauen.
+           Vorher wurde bei JEDER Aktualisierung geloescht und neu
+           gezeichnet — das kam als staendiges Flackern an. Die Werte
+           liegen ohnehin in Zeilenbaendern, die ihren Hintergrund selbst
+           mitbringen, also genuegt es, diese Baender zu erneuern. */
+        bool background_changed = (s_background != frame.background);
         s_background = frame.background;
-        clear_screen();
+        if (background_changed)
+            clear_screen();
         if (frame.style == BM24_DISPLAY_STYLE_BIG_VALUE) {
             draw_text(4, frame.line[0], 2, COLOR_ORANGE);
             draw_text(34, frame.line[1], 4, COLOR_WHITE);
@@ -369,7 +376,9 @@ bool bm24_display_start(void)
         esp_lcd_panel_init(s_panel) != ESP_OK ||
         esp_lcd_panel_invert_color(s_panel, true) != ESP_OK ||
         esp_lcd_panel_swap_xy(s_panel, true) != ESP_OK ||
-        esp_lcd_panel_mirror(s_panel, false, true) != ESP_OK ||
+        /* Beide Achsen spiegeln = 180 Grad. Mit nur einer gespiegelten
+           Achse standen die Hintergrundgrafiken auf dem Kopf. */
+        esp_lcd_panel_mirror(s_panel, true, false) != ESP_OK ||
         esp_lcd_panel_set_gap(s_panel, 0, 35) != ESP_OK)
         return false;
 
@@ -448,7 +457,7 @@ void bm24_display_toggle_rotation(void)
         xSemaphoreTake(s_panel_lock, pdMS_TO_TICKS(500)) != pdTRUE)
         return;
     s_flipped = !s_flipped;
-    esp_lcd_panel_mirror(s_panel, s_flipped, !s_flipped);
+    esp_lcd_panel_mirror(s_panel, !s_flipped, s_flipped);
     xSemaphoreGive(s_panel_lock);
     if (s_task)
         xTaskNotifyGive(s_task);
