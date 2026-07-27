@@ -30,6 +30,10 @@ static volatile bool s_active;
 static volatile bool s_started;
 static volatile bool s_hw_trusted;
 static volatile uint8_t s_sw_duty = 100;
+#ifndef BM24_PAUSE_ON_NETWORK
+#define BM24_PAUSE_ON_NETWORK 0
+#endif
+
 static volatile bool s_network_window;
 static volatile uint32_t s_network_deadline_ms;
 static uint32_t s_network_users;
@@ -51,6 +55,7 @@ static uint32_t now_ms(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+#if BM24_PAUSE_ON_NETWORK
 static bool network_window_active(void)
 {
     bool active;
@@ -64,6 +69,7 @@ static bool network_window_active(void)
     portEXIT_CRITICAL(&s_network_lock);
     return active;
 }
+#endif
 
 static void stats_reset_for_job(uint32_t generation)
 {
@@ -177,10 +183,18 @@ static void hw_worker(void *arg)
         }
         if (!s_active || s_generation != local_generation)
             continue;
+        /* Waehrend eines Netzabrufs komplett anzuhalten stammt aus 1.x, wo
+           die Sperre auf das SHA-Werk ueber ganze Jobs gehalten wurde. Hier
+           wird sie ohnehin alle BM24_HW_CHUNK Nonces freigegeben, TLS kommt
+           also auch ohne Pause dazwischen. Gemessen kostete die Pause acht
+           Prozent Hashrate, inklusive Sekunden mit voelligem Stillstand.
+           Auf 1 gesetzt kehrt das alte Verhalten zurueck. */
+#if BM24_PAUSE_ON_NETWORK
         if (network_window_active()) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
+#endif
 
         candidate_context ctx = {
             .job = job,
