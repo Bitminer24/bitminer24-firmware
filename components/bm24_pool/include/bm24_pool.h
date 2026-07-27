@@ -23,6 +23,7 @@ typedef struct {
     uint64_t stale;
     uint64_t reconnects;
     uint64_t protocol_errors;
+    double best_difficulty;
     char last_error[96];
 } bm24_pool_stats;
 

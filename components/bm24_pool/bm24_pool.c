@@ -5,13 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
-#include "esp_netif_sntp.h"
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "esp_tls.h"
@@ -56,7 +54,6 @@ static portMUX_TYPE s_stats_lock = portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t s_task;
 static char s_line[BM24_LINE_MAX];
 static bm24_stratum_message s_message;
-static bool s_sntp_started;
 
 static uint32_t now_ms(void)
 {
@@ -228,6 +225,8 @@ static bool submit_share(pool_session *session,
     remember_submit(session, id);
     portENTER_CRITICAL(&s_stats_lock);
     ++s_stats.submitted;
+    if (share->difficulty > s_stats.best_difficulty)
+        s_stats.best_difficulty = share->difficulty;
     portEXIT_CRITICAL(&s_stats_lock);
     ESP_LOGI(TAG, "Share TX id=%" PRIu32 " diff=%.8g nonce=%08" PRIx32,
              id, share->difficulty, share->nonce);
@@ -324,22 +323,9 @@ static bool process_line(pool_session *session, const char *line)
 static esp_tls_t *connect_pool(void)
 {
     if (s_config.pool_tls) {
-        time_t now;
-        time(&now);
-        if (now < 1704067200) { /* Vor 2024 ist Zertifikatszeit unbrauchbar. */
-            if (!s_sntp_started) {
-                esp_sntp_config_t sntp =
-                    ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
-                if (esp_netif_sntp_init(&sntp) != ESP_OK) {
-                    stats_error("SNTP konnte nicht starten");
-                    return NULL;
-                }
-                s_sntp_started = true;
-            }
-            if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(15000)) != ESP_OK) {
-                stats_error("Keine sichere Zeit fuer TLS");
-                return NULL;
-            }
+        if (!bm24_network_sync_time(15000)) {
+            stats_error("Keine sichere Zeit fuer TLS");
+            return NULL;
         }
     }
 

@@ -8,7 +8,6 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/gpio.h"
 #include "driver/temperature_sensor.h"
 #include "esp_app_desc.h"
 #include "esp_idf_version.h"
@@ -16,6 +15,7 @@
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 
 #include "bm24_config.h"
@@ -23,8 +23,7 @@
 #include "bm24_miner.h"
 #include "bm24_network.h"
 #include "bm24_pool.h"
-
-#define BUTTON_SETUP GPIO_NUM_14
+#include "bm24_ui.h"
 
 static const char *TAG = "bm24";
 static temperature_sensor_handle_t s_temperature;
@@ -87,35 +86,14 @@ static void supervisor_task(void *arg)
         esp_task_wdt_init(&watchdog) == ESP_OK &&
         esp_task_wdt_add(NULL) == ESP_OK;
 
-    gpio_config_t button = {
-        .pin_bit_mask = 1ULL << BUTTON_SETUP,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE
-    };
-    gpio_config(&button);
-
     uint32_t last_generation = 0;
     uint64_t last_hw = 0, last_sw = 0;
     uint32_t stalled_seconds = 0;
-    uint32_t setup_hold = 0;
-    bool setup_opened = false;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         if (watchdog_added)
             esp_task_wdt_reset();
-
-        if (gpio_get_level(BUTTON_SETUP) == 0) {
-            if (setup_hold < 5)
-                ++setup_hold;
-            if (setup_hold >= 4 && !setup_opened) {
-                setup_opened = bm24_network_open_portal();
-                if (setup_opened)
-                    ESP_LOGW(TAG, "Setup-Portal per Taste geoeffnet");
-            }
-        } else {
-            setup_hold = 0;
-        }
 
         bm24_miner_stats miner;
         bm24_pool_stats pool;
@@ -159,35 +137,17 @@ static void supervisor_task(void *arg)
             bm24_miner_clear_job();
         }
 
-        if (s_display_ready) {
-            if (network.portal_active) {
-                bm24_display_setup(network.setup_ssid,
-                                   BM24_SETUP_PASSWORD);
-            } else {
-                bm24_display_frame frame = {0};
-                strlcpy(frame.line[0], "BITMINER24",
-                        sizeof(frame.line[0]));
-                snprintf(frame.line[1], sizeof(frame.line[1]),
-                         "%.1f KH/S  %.0f C",
-                         (hw_rate + sw_rate) / 1000.0, temperature);
-                snprintf(frame.line[2], sizeof(frame.line[2]),
-                         "HW %.1f  SW %.1f",
-                         hw_rate / 1000.0, sw_rate / 1000.0);
-                snprintf(frame.line[3], sizeof(frame.line[3]),
-                         "POOL %s  WIFI %d",
-                         pool.connected ? "ONLINE" : "WARTET",
-                         (int)network.rssi);
-                snprintf(frame.line[4], sizeof(frame.line[4]),
-                         "SHARES %" PRIu64 "/%" PRIu64,
-                         pool.accepted, pool.submitted);
-                snprintf(frame.line[5], sizeof(frame.line[5]),
-                         "IDF %s | DUTY %u%% | JOB %" PRIu32,
-                         esp_get_idf_version(),
-                         (unsigned)miner.sw_duty_percent,
-                         pool.active_job_tag);
-                bm24_display_set(&frame);
-            }
-        }
+        bm24_ui_state ui = {
+            .hw_khs = hw_rate / 1000.0,
+            .sw_khs = sw_rate / 1000.0,
+            .temperature_c = temperature,
+            .uptime_seconds =
+                (uint64_t)(esp_timer_get_time() / 1000000),
+            .miner = miner,
+            .pool = pool,
+            .network = network
+        };
+        bm24_ui_update(&ui);
 
         ESP_LOGI(TAG,
                  "%.1f kH/s (HW %.1f, SW %.1f), %.1f C, Duty %u%%, "
@@ -221,7 +181,7 @@ void app_main(void)
 
     s_display_ready = bm24_display_start();
     if (!s_display_ready)
-        ESP_LOGE(TAG, "Display-Initialisierung fehlgeschlagen");
+        fatal_boot("DISPLAY INIT", pending_verify);
 
     temperature_sensor_config_t temp_config =
         TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
@@ -250,6 +210,8 @@ void app_main(void)
     bm24_network_get_status(&network);
     if (!connected && !network.portal_active)
         fatal_boot("WLAN/SETUP INIT", pending_verify);
+    if (!bm24_ui_start())
+        fatal_boot("UI TASK", pending_verify);
 
     /* Der Image-Checkpoint umfasst NVS, LCD-Treiber, SHA-Selbsttest und
        einen funktionsfaehigen WLAN- oder Setup-Pfad. Erst jetzt ist ein

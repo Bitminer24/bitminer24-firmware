@@ -2,7 +2,7 @@
 
 ## WICHTIG ZUERST: Auf COM21 laeuft jetzt der IDF-5.5-Produkt-RC
 
-Auf dem LilyGO T-Display S3 liegt **BitMiner24 2.0.0-rc1**, kein fester
+Auf dem LilyGO T-Display S3 liegt **BitMiner24 2.0.0-rc2**, kein fester
 Pruefstand und keine 1.x-Firmware. Der Boot ist sauber, Display und Setup-AP
 laufen, der SHA-Hardware-Selbsttest meldet 64/64. Das Geraet mint noch nicht,
 weil nach dem Factory-Flash absichtlich keine privaten Zugangsdaten im NVS
@@ -18,7 +18,7 @@ Ersteinrichtung direkt am Handy oder Rechner:
 Danach muss COM21 fuer die echte Abnahme mitgelesen werden: Connect,
 Subscribe, Authorize, Job, circa 300 kH/s, Temperaturregelung und mindestens
 ein akzeptierter Share. Erst nach diesem Lauf und einem mehrstuendigen Soak
-wird aus RC1 ein Release.
+wird aus RC2 ein Release.
 
 Nur fuer den Notfall kann 1.8.3 wiederhergestellt werden:
 
@@ -127,7 +127,7 @@ Geraetelauf ueber den kompletten notify->Share-Pfad: 52 stationaere
 21 share-faehige Treffer, **0 Abweichungen**. RAM 6,2 %, Flash 8,1 %.
 Stand vor RC-Rollout: 38/38 Host-Tests gruen.
 
-### Produktpfad im RC1
+### Produktpfad im RC2
 
 Der feste `mining.notify`-Pruefstand ist aus `app_main` entfernt. Der Build
 enthaelt nun:
@@ -138,6 +138,13 @@ enthaelt nun:
 - Stratum TCP oder TLS mit Zertifikatsbundle, SNTP, Keepalive und Backoff
 - Subscribe/Authorize, Notify/Difficulty/Extranonce, Jobwechsel und Share-Submit
 - nativen IDF-I80/ST7789-Treiber auf den offiziellen T-Display-S3-Pins
+- PWM-Backlight mit der bewaehrten 130/255-Helligkeit, ohne Hashverlust
+- fuenf native Seiten wie im 1.x-Ablauf: Miner, Uhr/Block/Preis,
+  Bitcoin-Netz, grosser BTC-Preis und Solo-Tracker
+- zeitlich entzerrte HTTPS-Abrufe fuer CoinGecko, mempool.space und den
+  BitMiner24-Solo-Tracker; nie HTTP im Zeichenpfad
+- nativen 20-ms-Tastentask: GPIO 14 kurz = naechste Seite, vier Sekunden =
+  Setup; GPIO 0 kurz = Display an/aus, doppelt = drehen
 - A/B-OTA; ein neues Image wird erst nach NVS-, Display-, SHA- und
   Netzwerk/Portal-Selbsttest als gueltig markiert
 - Supervisor-Watchdog, HW-Stall-Erkennung, SHA-Fail-closed und smarte
@@ -148,14 +155,14 @@ Es gibt im v2-Produktbuild keine Arduino-, WiFiManager-, ArduinoJson- oder
 TFT_eSPI-Abhaengigkeit mehr. Der reale Poolpfad ist implementiert, aber noch
 nicht mit den echten Zugangsdaten des Besitzers end-to-end vermessen.
 
-### Verifikation des RC1
+### Verifikation des RC2
 
 Bereits bestanden:
 
 - 38/38 Host-Tests
 - IDF-5.5.0/GCC-14.2-Firmwarebuild
-- RAM 68.216 / 327.680 Byte (20,8 %)
-- App 1.052.705 / 3.145.728 Byte (33,5 %)
+- RAM 80.968 / 327.680 Byte (24,7 %)
+- App 1.103.997 / 3.145.728 Byte (35,1 %)
 - Flash auf COM21
 - nativer LCD-Start, Temperatursensor, SHA-Selbsttest 64/64
 - WPA2-Setup-AP und HTTP-Server laut Geraetelog
@@ -165,8 +172,15 @@ Noch offen und nicht schoenreden:
 
 - lokale Provisionierung mit echtem WLAN und echter BTC-Adresse
 - echter Pool-Handshake und akzeptierter Share
+- Live-Pruefung aller fuenf Seiten, Marktdaten und beider Tasten am Geraet
 - Durchsatz/Temperatur mit Wi-Fi, Display und Gehaeuse
 - Reconnect-, OTA-Rollback- und mehrstuendiger Soak-Test auf Hardware
+
+Die fuenf Informationsseiten sind funktional nativ portiert und neu
+gezeichnet. Sie verwenden bewusst keine TFT_eSPI-/Arduino-Bitmaps; die
+alten Hintergrundgrafiken sind daher nicht pixelidentisch. Falls
+Pixelgleichheit statt der nativen Neugestaltung gewuenscht ist, ist das ein
+separater visueller Port, kein fehlender Mining- oder Bedienpfad.
 
 ### Quellen, die schon geprüft sind
 

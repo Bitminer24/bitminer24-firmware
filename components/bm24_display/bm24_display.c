@@ -6,6 +6,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
@@ -15,6 +16,7 @@
 #define LCD_HEIGHT      170
 #define LCD_BAND_HEIGHT 24
 #define LCD_PIXEL_CLOCK (10 * 1000 * 1000)
+#define BACKLIGHT_DUTY   130u
 
 #define PIN_POWER 15
 #define PIN_BL    38
@@ -97,9 +99,41 @@ static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_io;
 static SemaphoreHandle_t s_tx_done;
 static SemaphoreHandle_t s_frame_lock;
+static SemaphoreHandle_t s_panel_lock;
 static uint16_t s_pixels[LCD_WIDTH * LCD_BAND_HEIGHT];
 static bm24_display_frame s_frame;
 static TaskHandle_t s_task;
+static bool s_backlight_enabled = true;
+static bool s_flipped;
+
+static bool backlight_init(void)
+{
+    ledc_timer_config_t timer = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .duty_resolution = LEDC_TIMER_8_BIT,
+        .timer_num = LEDC_TIMER_0,
+        .freq_hz = 5000,
+        .clk_cfg = LEDC_AUTO_CLK
+    };
+    ledc_channel_config_t channel = {
+        .gpio_num = PIN_BL,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = LEDC_CHANNEL_0,
+        .intr_type = LEDC_INTR_DISABLE,
+        .timer_sel = LEDC_TIMER_0,
+        .duty = 0,
+        .hpoint = 0
+    };
+    return ledc_timer_config(&timer) == ESP_OK &&
+           ledc_channel_config(&channel) == ESP_OK;
+}
+
+static void backlight_apply(void)
+{
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0,
+                  s_backlight_enabled ? BACKLIGHT_DUTY : 0);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+}
 
 static bool color_done(esp_lcd_panel_io_handle_t io,
                        esp_lcd_panel_io_event_data_t *event, void *arg)
@@ -134,6 +168,16 @@ static const uint8_t *glyph(char c, uint8_t scratch[7])
               scratch[3] = 4; scratch[4] = 8; scratch[5] = 16;
               scratch[6] = 17; break;
     case '+': scratch[2] = 4; scratch[3] = 14; scratch[4] = 4; break;
+    case ',': scratch[5] = 4; scratch[6] = 8; break;
+    case '=': scratch[2] = 14; scratch[4] = 14; break;
+    case '#': scratch[1] = 10; scratch[2] = 31; scratch[3] = 10;
+              scratch[4] = 31; scratch[5] = 10; break;
+    case '|': scratch[0] = 4; scratch[1] = 4; scratch[2] = 4;
+              scratch[3] = 4; scratch[4] = 4; scratch[5] = 4;
+              scratch[6] = 4; break;
+    case '$': scratch[0] = 4; scratch[1] = 15; scratch[2] = 20;
+              scratch[3] = 14; scratch[4] = 5; scratch[5] = 30;
+              scratch[6] = 4; break;
     case '(': scratch[1] = 2; scratch[2] = 4; scratch[3] = 4;
               scratch[4] = 4; scratch[5] = 2; break;
     case ')': scratch[1] = 8; scratch[2] = 4; scratch[3] = 4;
@@ -211,13 +255,32 @@ static void render_task(void *arg)
         frame = s_frame;
         xSemaphoreGive(s_frame_lock);
 
+        if (xSemaphoreTake(s_panel_lock, pdMS_TO_TICKS(500)) != pdTRUE)
+            continue;
         clear_screen();
-        draw_text(4, frame.line[0], 3, COLOR_ORANGE);
-        draw_text(31, frame.line[1], 2, COLOR_WHITE);
-        draw_text(55, frame.line[2], 2, COLOR_BLUE);
-        draw_text(79, frame.line[3], 2, COLOR_WHITE);
-        draw_text(103, frame.line[4], 2, COLOR_GREEN);
-        draw_text(139, frame.line[5], 1, COLOR_WHITE);
+        if (frame.style == BM24_DISPLAY_STYLE_BIG_VALUE) {
+            draw_text(4, frame.line[0], 2, COLOR_ORANGE);
+            draw_text(34, frame.line[1], 4, COLOR_WHITE);
+            draw_text(75, frame.line[2], 2, COLOR_BLUE);
+            draw_text(99, frame.line[3], 2, COLOR_WHITE);
+            draw_text(123, frame.line[4], 2, COLOR_GREEN);
+            draw_text(153, frame.line[5], 1, COLOR_WHITE);
+        } else if (frame.style == BM24_DISPLAY_STYLE_DASHBOARD) {
+            draw_text(4, frame.line[0], 2, COLOR_ORANGE);
+            draw_text(29, frame.line[1], 2, COLOR_WHITE);
+            draw_text(53, frame.line[2], 2, COLOR_BLUE);
+            draw_text(77, frame.line[3], 2, COLOR_WHITE);
+            draw_text(101, frame.line[4], 2, COLOR_GREEN);
+            draw_text(139, frame.line[5], 1, COLOR_WHITE);
+        } else {
+            draw_text(4, frame.line[0], 3, COLOR_ORANGE);
+            draw_text(31, frame.line[1], 2, COLOR_WHITE);
+            draw_text(55, frame.line[2], 2, COLOR_BLUE);
+            draw_text(79, frame.line[3], 2, COLOR_WHITE);
+            draw_text(103, frame.line[4], 2, COLOR_GREEN);
+            draw_text(139, frame.line[5], 1, COLOR_WHITE);
+        }
+        xSemaphoreGive(s_panel_lock);
     }
 }
 
@@ -227,19 +290,18 @@ bool bm24_display_start(void)
         return true;
     s_tx_done = xSemaphoreCreateBinary();
     s_frame_lock = xSemaphoreCreateMutex();
-    if (!s_tx_done || !s_frame_lock)
+    s_panel_lock = xSemaphoreCreateMutex();
+    if (!s_tx_done || !s_frame_lock || !s_panel_lock)
         return false;
 
     gpio_config_t output = {
-        .pin_bit_mask = (1ULL << PIN_POWER) | (1ULL << PIN_RD) |
-                        (1ULL << PIN_BL),
+        .pin_bit_mask = (1ULL << PIN_POWER) | (1ULL << PIN_RD),
         .mode = GPIO_MODE_OUTPUT
     };
-    if (gpio_config(&output) != ESP_OK)
+    if (gpio_config(&output) != ESP_OK || !backlight_init())
         return false;
     gpio_set_level(PIN_POWER, 1);
     gpio_set_level(PIN_RD, 1);
-    gpio_set_level(PIN_BL, 0);
 
     esp_lcd_i80_bus_handle_t bus;
     esp_lcd_i80_bus_config_t bus_config = {
@@ -302,7 +364,7 @@ bool bm24_display_start(void)
     }
     if (esp_lcd_panel_disp_on_off(s_panel, true) != ESP_OK)
         return false;
-    gpio_set_level(PIN_BL, 1);
+    backlight_apply();
 
     strlcpy(s_frame.line[0], "BITMINER24", sizeof(s_frame.line[0]));
     strlcpy(s_frame.line[1], "START IDF 5.5", sizeof(s_frame.line[1]));
@@ -340,4 +402,22 @@ void bm24_display_setup(const char *ssid, const char *password)
     strlcpy(frame.line[5], "WLAN + BTC-ADRESSE EINTRAGEN",
             sizeof(frame.line[5]));
     bm24_display_set(&frame);
+}
+
+void bm24_display_toggle_enabled(void)
+{
+    s_backlight_enabled = !s_backlight_enabled;
+    backlight_apply();
+}
+
+void bm24_display_toggle_rotation(void)
+{
+    if (!s_panel ||
+        xSemaphoreTake(s_panel_lock, pdMS_TO_TICKS(500)) != pdTRUE)
+        return;
+    s_flipped = !s_flipped;
+    esp_lcd_panel_mirror(s_panel, s_flipped, !s_flipped);
+    xSemaphoreGive(s_panel_lock);
+    if (s_task)
+        xTaskNotifyGive(s_task);
 }

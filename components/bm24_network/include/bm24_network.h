@@ -26,6 +26,7 @@ typedef struct {
    nach Timeout bleibt ein WPA2-Setup-AP mit HTTP-Portal aktiv. */
 bool bm24_network_start(const bm24_config *config, uint32_t timeout_ms);
 bool bm24_network_wait_connected(uint32_t timeout_ms);
+bool bm24_network_sync_time(uint32_t timeout_ms);
 bool bm24_network_open_portal(void);
 void bm24_network_get_status(bm24_network_status *out);
 

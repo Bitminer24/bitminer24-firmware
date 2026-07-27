@@ -32,10 +32,14 @@ static volatile bool s_hw_trusted;
 static volatile uint8_t s_sw_duty = 100;
 static volatile bool s_network_window;
 static volatile uint32_t s_network_deadline_ms;
+static uint32_t s_network_users;
 static uint32_t s_nonce_seed;
 
 static portMUX_TYPE s_stats_lock = portMUX_INITIALIZER_UNLOCKED;
+static portMUX_TYPE s_network_lock = portMUX_INITIALIZER_UNLOCKED;
 static bm24_miner_stats s_stats;
+static uint64_t s_total_hw_hashes;
+static uint64_t s_total_sw_hashes;
 
 typedef struct {
     bm24_miner_job job;
@@ -49,12 +53,16 @@ static uint32_t now_ms(void)
 
 static bool network_window_active(void)
 {
-    if (!s_network_window)
-        return false;
-    if ((int32_t)(s_network_deadline_ms - now_ms()) > 0)
-        return true;
-    s_network_window = false;
-    return false;
+    bool active;
+    portENTER_CRITICAL(&s_network_lock);
+    active = s_network_window;
+    if (active && (int32_t)(s_network_deadline_ms - now_ms()) <= 0) {
+        s_network_window = false;
+        s_network_users = 0;
+        active = false;
+    }
+    portEXIT_CRITICAL(&s_network_lock);
+    return active;
 }
 
 static void stats_reset_for_job(uint32_t generation)
@@ -65,6 +73,8 @@ static void stats_reset_for_job(uint32_t generation)
     s_stats.active = true;
     s_stats.hw_trusted = s_hw_trusted;
     s_stats.sw_duty_percent = s_sw_duty;
+    s_stats.total_hw_hashes = s_total_hw_hashes;
+    s_stats.total_sw_hashes = s_total_sw_hashes;
     portEXIT_CRITICAL(&s_stats_lock);
 }
 
@@ -72,6 +82,8 @@ static void stats_add_hw(const bm24_hw_result *r)
 {
     portENTER_CRITICAL(&s_stats_lock);
     s_stats.hw_hashes += r->hashes;
+    s_total_hw_hashes += r->hashes;
+    s_stats.total_hw_hashes = s_total_hw_hashes;
     s_stats.hw_candidates += r->candidates;
     s_stats.mismatches += r->mismatches;
     s_stats.hw_trusted = s_hw_trusted;
@@ -83,6 +95,8 @@ static void stats_add_sw(uint32_t hashes, uint32_t candidates,
 {
     portENTER_CRITICAL(&s_stats_lock);
     s_stats.sw_hashes += hashes;
+    s_total_sw_hashes += hashes;
+    s_stats.total_sw_hashes = s_total_sw_hashes;
     s_stats.sw_candidates += candidates;
     s_stats.mismatches += mismatches;
     portEXIT_CRITICAL(&s_stats_lock);
@@ -351,10 +365,15 @@ void bm24_miner_set_sw_duty(uint8_t percent)
 
 void bm24_miner_set_network_window(bool active)
 {
+    portENTER_CRITICAL(&s_network_lock);
     if (active) {
+        ++s_network_users;
         s_network_deadline_ms = now_ms() + BM24_NETWORK_WINDOW_MAX_MS;
         s_network_window = true;
     } else {
-        s_network_window = false;
+        if (s_network_users)
+            --s_network_users;
+        s_network_window = s_network_users != 0;
     }
+    portEXIT_CRITICAL(&s_network_lock);
 }

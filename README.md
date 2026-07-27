@@ -22,9 +22,9 @@ WiFiManager, ArduinoJson und TFT_eSPI sind nicht Teil des v2-Builds.
 
 Der komplette Rechenpfad erreicht im 55-s-Pruefstand durchschnittlich
 300,26 kH/s bei 60,7 °C und null Abweichungen. Der Produkt-RC
-`2.0.0-rc1` bootet auf dem T-Display S3 und wartet aktuell auf seine erste
+`2.0.0-rc2` bootet auf dem T-Display S3 und wartet aktuell auf seine erste
 lokale Provisionierung. Poolbetrieb, Shares und Temperatur mit echtem
-Wi-Fi/Display werden danach im Soak-Test abgenommen; bis dahin ist RC1
+Wi-Fi/Display werden danach im Soak-Test abgenommen; bis dahin ist RC2
 bewusst noch kein finales Release.
 
 ## Bauen
@@ -64,7 +64,9 @@ components/
   bm24_config/       versionierter NVS-Blob und Fail-closed-Validierung
   bm24_network/      Wi-Fi, Setup-Portal und A/B-OTA-Transport
   bm24_pool/         TCP/TLS, SNTP, Reconnect, Jobs und Share-Submit
-  bm24_display/      nativer I80/ST7789-Treiber fuer T-Display S3
+  bm24_display/      nativer I80/ST7789-Treiber und PWM-Backlight
+  bm24_metrics/      entzerrte HTTPS-Daten fuer Preis/Netz/Solo-Seiten
+  bm24_ui/           fuenf Seiten und nativer 20-ms-Tastentask
 test/                38 Unity-Host-Tests (pio test -e native)
 partitions.csv       A/B-OTA-Layout, App ab 0x10000
 ```

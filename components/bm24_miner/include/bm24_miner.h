@@ -36,6 +36,8 @@ typedef struct {
     uint8_t sw_duty_percent;
     uint64_t hw_hashes;
     uint64_t sw_hashes;
+    uint64_t total_hw_hashes;
+    uint64_t total_sw_hashes;
     uint64_t hw_candidates;
     uint64_t sw_candidates;
     uint64_t mismatches;

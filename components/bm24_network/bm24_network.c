@@ -3,15 +3,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_netif_sntp.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
@@ -21,10 +24,12 @@
 
 static const char *TAG = "bm24_net";
 static EventGroupHandle_t s_events;
+static SemaphoreHandle_t s_time_lock;
 static httpd_handle_t s_httpd;
 static bm24_network_status s_status;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool s_initialized;
+static bool s_sntp_started;
 
 static const char PORTAL_HTML[] =
     "<!doctype html><html lang=de><meta charset=utf-8>"
@@ -401,7 +406,8 @@ bool bm24_network_start(const bm24_config *config, uint32_t timeout_ms)
     if (s_initialized)
         return bm24_network_wait_connected(timeout_ms);
     s_events = xEventGroupCreate();
-    if (!s_events)
+    s_time_lock = xSemaphoreCreateMutex();
+    if (!s_events || !s_time_lock)
         return false;
 
     if (esp_netif_init() != ESP_OK ||
@@ -467,6 +473,35 @@ bool bm24_network_wait_connected(uint32_t timeout_ms)
         s_events, CONNECTED_BIT, pdFALSE, pdFALSE,
         pdMS_TO_TICKS(timeout_ms));
     return (bits & CONNECTED_BIT) != 0;
+}
+
+bool bm24_network_sync_time(uint32_t timeout_ms)
+{
+    time_t now;
+    time(&now);
+    if (now >= 1704067200)
+        return true;
+    if (!s_time_lock ||
+        xSemaphoreTake(s_time_lock, pdMS_TO_TICKS(timeout_ms)) != pdTRUE)
+        return false;
+
+    bool ok = false;
+    time(&now);
+    if (now >= 1704067200) {
+        ok = true;
+    } else {
+        if (!s_sntp_started) {
+            esp_sntp_config_t config =
+                ESP_NETIF_SNTP_DEFAULT_CONFIG("europe.pool.ntp.org");
+            if (esp_netif_sntp_init(&config) == ESP_OK)
+                s_sntp_started = true;
+        }
+        if (s_sntp_started &&
+            esp_netif_sntp_sync_wait(pdMS_TO_TICKS(timeout_ms)) == ESP_OK)
+            ok = true;
+    }
+    xSemaphoreGive(s_time_lock);
+    return ok;
 }
 
 void bm24_network_get_status(bm24_network_status *out)
