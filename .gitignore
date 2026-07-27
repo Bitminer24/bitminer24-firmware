@@ -5,3 +5,9 @@ managed_components/
 dependencies.lock
 build.log
 upload.log
+
+# Von PlatformIO erzeugt und genau einmal geschrieben. Versioniert wuerde
+# jeder Mitarbeiter den veralteten Stand erben, statt sdkconfig.defaults
+# auszuwerten — genau daran ist hier schon eine Einstellung stillschweigend
+# gescheitert.
+sdkconfig.bm24-v2
