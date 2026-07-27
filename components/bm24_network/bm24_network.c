@@ -12,6 +12,7 @@
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "lwip/sockets.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
@@ -26,28 +27,45 @@ static const char *TAG = "bm24_net";
 static EventGroupHandle_t s_events;
 static SemaphoreHandle_t s_time_lock;
 static httpd_handle_t s_httpd;
+static TaskHandle_t s_dns_task;
 static bm24_network_status s_status;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool s_initialized;
 static bool s_sntp_started;
 
-static const char PORTAL_HTML[] =
+/* Das Formular wird in drei Stuecken gesendet, weil dazwischen die
+   Ergebnisse des WLAN-Scans eingesetzt werden. Ohne Auswahlliste musste der
+   Name von Hand getippt werden — der haeufigste Einrichtungsfehler. */
+/* Oeffentliche Testadresse (Genesis-Coinbase). Sie erlaubt einen sofortigen
+   Funktionstest ohne Tipparbeit, gehoert aber niemandem im Zugriff — das
+   Formular weist deshalb deutlich darauf hin. Die Sperre gegen die
+   Burn-Adresse in bm24_config bleibt davon unberuehrt. */
+#define BM24_DEFAULT_WORKER "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+
+static const char PORTAL_HEAD[] =
     "<!doctype html><html lang=de><meta charset=utf-8>"
     "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
     "<title>BitMiner24 Setup</title><style>"
     "body{font:16px system-ui;background:#071018;color:#eef;max-width:34rem;"
     "margin:2rem auto;padding:0 1rem}form{display:grid;gap:.8rem}"
-    "label{display:grid;gap:.25rem}input{font:inherit;padding:.7rem;"
+    "label{display:grid;gap:.25rem}input,select{font:inherit;padding:.7rem;"
     "border:1px solid #456;border-radius:.4rem}button{font:inherit;padding:.8rem;"
     "background:#f7931a;color:#111;border:0;border-radius:.4rem;font-weight:700}"
-    "small{color:#abc}</style><h1>BitMiner24 2.0</h1>"
-    "<p>ESP-IDF 5.5 Setup. Bitte WLAN und deine echte Mining-Adresse eintragen."
-    "</p><form method=post action=/save>"
-    "<label>WLAN-Name<input name=ssid maxlength=32 required></label>"
+    "small{color:#abc}.warn{background:#3a2a10;border:1px solid #f7931a;"
+    "padding:.6rem;border-radius:.4rem}</style><h1>BitMiner24 2.0</h1>"
+    "<p>Bitte WLAN und deine Mining-Adresse eintragen.</p>"
+    "<form method=post action=/save>"
+    "<label>WLAN-Name<select name=ssid required>";
+
+static const char PORTAL_TAIL[] =
+    "</select></label>"
     "<label>WLAN-Passwort<input name=wifi_password type=password maxlength=64>"
     "<small>Leer lassen nur bei offenem WLAN.</small></label>"
     "<label>BTC-Adresse / Worker<input name=worker maxlength=128 required "
-    "placeholder=\"bc1... oder Adresse.worker\"></label>"
+    "value=\"" BM24_DEFAULT_WORKER "\"></label>"
+    "<p class=warn><small>Voreingetragen ist eine oeffentliche Testadresse. "
+    "Vor dem Dauerbetrieb unbedingt durch die eigene Adresse ersetzen, sonst "
+    "gehen Funde nicht an dich.</small></p>"
     "<label>Pool-Host<input name=pool_host maxlength=128 "
     "value=\"public-pool.io\" required></label>"
     "<label>Pool-Port<input name=pool_port type=number min=1 max=65535 "
@@ -162,11 +180,142 @@ static bool form_value(const char *form, const char *key, char *out,
     return false;
 }
 
+/* HTML-Sonderzeichen entschaerfen: WLAN-Namen sind Fremdeingaben. */
+static void html_escape(const char *in, char *out, size_t capacity)
+{
+    size_t w = 0;
+    for (const unsigned char *p = (const unsigned char *)in; *p && w + 7 < capacity; ++p) {
+        const char *rep = NULL;
+        switch (*p) {
+        case '<': rep = "&lt;"; break;
+        case '>': rep = "&gt;"; break;
+        case '&': rep = "&amp;"; break;
+        case '"': rep = "&quot;"; break;
+        default: break;
+        }
+        if (rep) { size_t n = strlen(rep); memcpy(out + w, rep, n); w += n; }
+        else if (*p >= 0x20) out[w++] = (char)*p;
+    }
+    out[w] = 0;
+}
+
+/* Umgebende Netze auflisten. Laeuft im APSTA-Modus, damit das Setup-WLAN
+   waehrend des Scans erreichbar bleibt. */
+static esp_err_t send_scan_options(httpd_req_t *req)
+{
+    wifi_mode_t mode;
+    if (esp_wifi_get_mode(&mode) == ESP_OK && mode == WIFI_MODE_AP)
+        esp_wifi_set_mode(WIFI_MODE_APSTA);
+
+    wifi_scan_config_t scan = { .show_hidden = false };
+    if (esp_wifi_scan_start(&scan, true) != ESP_OK)
+        return httpd_resp_sendstr_chunk(req,
+            "<option value=\"\">Scan fehlgeschlagen</option>");
+
+    uint16_t found = 0;
+    esp_wifi_scan_get_ap_num(&found);
+    if (found > 20) found = 20;
+    wifi_ap_record_t *records = calloc(found ? found : 1, sizeof(*records));
+    if (!records) {
+        esp_wifi_scan_stop();
+        return httpd_resp_sendstr_chunk(req,
+            "<option value=\"\">Kein Speicher</option>");
+    }
+    esp_wifi_scan_get_ap_records(&found, records);
+
+    char safe[100], line[256];
+    for (uint16_t i = 0; i < found; ++i) {
+        if (records[i].ssid[0] == 0)
+            continue;
+        html_escape((const char *)records[i].ssid, safe, sizeof(safe));
+        snprintf(line, sizeof(line),
+                 "<option value=\"%s\">%s (%d dBm)</option>",
+                 safe, safe, records[i].rssi);
+        httpd_resp_sendstr_chunk(req, line);
+    }
+    free(records);
+    if (!found)
+        httpd_resp_sendstr_chunk(req,
+            "<option value=\"\">Kein WLAN gefunden</option>");
+    return ESP_OK;
+}
+
 static esp_err_t portal_get(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_send(req, PORTAL_HTML, HTTPD_RESP_USE_STRLEN);
+    httpd_resp_sendstr_chunk(req, PORTAL_HEAD);
+    send_scan_options(req);
+    httpd_resp_sendstr_chunk(req, PORTAL_TAIL);
+    return httpd_resp_sendstr_chunk(req, NULL);
+}
+
+/* Captive Portal: jede unbekannte Adresse wird auf das Formular umgeleitet.
+   Erst dadurch oeffnet das Betriebssystem die Anmeldeseite von selbst,
+   so wie man es vom alten WiFiManager kennt. */
+/* Winziger DNS-Server: beantwortet jede A-Anfrage mit der eigenen Adresse.
+   Das ist der Teil, der ein Setup-WLAN zum Captive Portal macht; Android,
+   iOS und Windows pruefen nach dem Verbinden eine bekannte URL und zeigen
+   die Anmeldeseite nur, wenn die Antwort umgeleitet wird. */
+static void dns_task(void *arg)
+{
+    (void)arg;
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "DNS-Socket fehlgeschlagen");
+        vTaskDelete(NULL);
+        return;
+    }
+    struct sockaddr_in bind_addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(53),
+        .sin_addr.s_addr = htonl(INADDR_ANY)
+    };
+    if (bind(sock, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
+        ESP_LOGE(TAG, "DNS-Bind fehlgeschlagen");
+        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    uint8_t packet[256];
+    for (;;) {
+        struct sockaddr_in from;
+        socklen_t from_len = sizeof(from);
+        int len = recvfrom(sock, packet, sizeof(packet), 0,
+                           (struct sockaddr *)&from, &from_len);
+        /* Kleinste sinnvolle Anfrage: 12 Byte Kopf + Name + Typ/Klasse.
+           Alles darunter oder ohne Platz fuer die Antwort wird verworfen. */
+        if (len < 12 + 5 || len + 16 > (int)sizeof(packet))
+            continue;
+
+        packet[2] = 0x84;   /* Antwort, autoritativ */
+        packet[3] = 0x00;
+        packet[7] = packet[5];   /* so viele Antworten wie Fragen */
+
+        uint8_t *answer = packet + len;
+        *answer++ = 0xC0; *answer++ = 0x0C;          /* Zeiger auf den Namen */
+        *answer++ = 0x00; *answer++ = 0x01;          /* Typ A               */
+        *answer++ = 0x00; *answer++ = 0x01;          /* Klasse IN           */
+        *answer++ = 0x00; *answer++ = 0x00;
+        *answer++ = 0x00; *answer++ = 0x3C;          /* TTL 60 s            */
+        *answer++ = 0x00; *answer++ = 0x04;          /* Laenge 4            */
+        *answer++ = 192; *answer++ = 168;
+        *answer++ = 4;   *answer++ = 1;
+
+        sendto(sock, packet, len + 16, 0,
+               (struct sockaddr *)&from, from_len);
+    }
+}
+
+static esp_err_t portal_redirect(httpd_req_t *req, httpd_err_code_t error)
+{
+    (void)error;
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_set_hdr(req, "Connection", "close");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
 }
 
 static void restart_task(void *arg)
@@ -349,6 +498,13 @@ static bool start_http_portal(void)
         s_httpd = NULL;
         return false;
     }
+
+    /* Jede unbekannte Adresse landet auf dem Formular. Zusammen mit dem
+       DNS-Umleiter ergibt das das gewohnte Verhalten: WLAN auswaehlen,
+       Anmeldeseite oeffnet sich von allein. */
+    httpd_register_err_handler(s_httpd, HTTPD_404_NOT_FOUND, portal_redirect);
+    if (!s_dns_task)
+        xTaskCreate(dns_task, "bm24dns", 3072, NULL, 4, &s_dns_task);
     return true;
 }
 
