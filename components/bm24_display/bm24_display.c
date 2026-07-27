@@ -410,17 +410,14 @@ void bm24_display_set(const bm24_display_frame *frame)
 
 void bm24_display_setup(const char *ssid, const char *password)
 {
+    /* Die Setup-Grafik traegt die Anleitung bereits im Bild. Zusaetzlicher
+       Text legte sich darueber und machte beides unlesbar, deshalb bleibt
+       diese Seite rein grafisch. Zugangsdaten stehen im seriellen Log und
+       im Beileger; sichtbar bleiben sie ausserdem im WLAN-Namen selbst. */
+    (void)ssid;
+    (void)password;
     bm24_display_frame frame = {0};
-    frame.background = bm24_img_setup;   /* Setup-Grafik wie in 1.x */
-    strlcpy(frame.line[0], "SETUP", sizeof(frame.line[0]));
-    strlcpy(frame.line[1], "WLAN:", sizeof(frame.line[1]));
-    strlcpy(frame.line[2], ssid ? ssid : "BITMINER24",
-            sizeof(frame.line[2]));
-    snprintf(frame.line[3], sizeof(frame.line[3]), "PASS: %s",
-             password ? password : "-");
-    strlcpy(frame.line[4], "192.168.4.1", sizeof(frame.line[4]));
-    strlcpy(frame.line[5], "WLAN + BTC-ADRESSE EINTRAGEN",
-            sizeof(frame.line[5]));
+    frame.background = bm24_img_setup;
     bm24_display_set(&frame);
 }
 
