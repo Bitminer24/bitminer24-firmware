@@ -26,8 +26,9 @@ v2 liegt außerhalb des Workspace, weil der IDF-Build Pfade mit Leerzeichen able
 
 - ESP-IDF 5.5.0 / GCC 14.2, bootet auf dem Gerät
 - A/B-OTA-Partitionen aktiv, App ab `0x10000`, Boot-Rollback an
-- **19/19 Host-Tests grün** (`pio test -e native`): Formatierung, SHA-Referenz
-  gegen NIST + Genesis, Midstate-Äquivalenz, SW-Kernel-Filter über 800k Nonces
+- **26/26 Host-Tests grün** (`pio test -e native`): Formatierung, SHA-Referenz
+  gegen NIST + Genesis, Midstate-Äquivalenz, SW-Kernel-Filter über 800k
+  Nonces sowie native Stratum-Jobaufbereitung
 - CI-Workflow (Host-Tests + Firmware-Build) geschrieben, noch nicht gepusht
 - Host-Tests brauchen MinGW-GCC (per winget installiert), Pfad:
   `~/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT*/mingw64/bin`
@@ -70,12 +71,28 @@ python -m platformio run -e bm24-v2 -t upload --upload-port COM21
 # dann seriell mitlesen, 115200
 ```
 
+## Native Jobaufbereitung nach dem SHA-Fix
+
+`components/bm24_work` ist die erste Schicht des echten Miner-Ports:
+
+- Coinbase aus coinb1 + extranonce1 + extranonce2 + coinb2
+- Merkle-Pfad mit doppeltem SHA
+- exakt dieselbe Header-Byteordnung wie der vermessene 1.x-Miner
+- nBits -> little-endian 256-Bit-Netzwerkziel
+- Share-Difficulty und exakter Zielvergleich ohne Arduino-Typen
+- feste Grenzen fuer Coinbase und Merkle-Zweige, klare Fehler statt
+  ueberlaufender Puffer
+
+Die Erwartungswerte im Host-Test wurden unabhaengig mit Python `hashlib`
+erzeugt. Dazu kommen Genesis-Hash gegen diff-1-Target und Fehlerfaelle fuer
+Hex, extranonce2 und compact target. Stand: 26/26 Tests gruen.
+
 ### Naechster Produkt-Schritt
 
 Der aktuelle v2-Build ist weiterhin ein reproduzierbarer Pruefstand, noch
-kein Miner. Jetzt Stratum/Jobaufbereitung/Validierung als native,
-host-testbare Komponenten portieren; danach WiFi/NVS/UI. Den schnellen
-Registerpfad dabei unveraendert als abgenommene Basis behandeln.
+kein Miner. Jetzt den cJSON-Stratum-Parser und den Socket-/Reconnect-Task
+auf `bm24_work` setzen, danach WiFi/NVS/UI. Den schnellen Registerpfad dabei
+unveraendert als abgenommene Basis behandeln.
 
 ### Quellen, die schon geprüft sind
 

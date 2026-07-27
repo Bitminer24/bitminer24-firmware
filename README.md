@@ -36,8 +36,9 @@ components/
   bm24_sha/          portable SHA-Referenz — host-getestet
   bm24_sha_sw/       ausgerollter Software-Mining-Kernel — host-getestet
   bm24_sha_hw/       ESP32-S3-SHA-Werk, Boot-Selbsttest und Laufzeitpruefung
-  (folgt) bm24_stratum/ bm24_validate/ bm24_net/ bm24_ui/ bm24_config/
-                     bm24_ota/
+  bm24_work/         Stratum-Job -> Coinbase/Merkle/Header/Target,
+                     Share-Difficulty und Zielvergleich — host-getestet
+  (folgt) bm24_stratum/ bm24_net/ bm24_ui/ bm24_config/ bm24_ota/
 test/                Unity-Host-Tests (pio test -e native)
 partitions.csv       A/B-OTA-Layout, App ab 0x10000
 ```
