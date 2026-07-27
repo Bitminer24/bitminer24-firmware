@@ -3,8 +3,7 @@
 #include <string.h>
 
 #include "esp_attr.h"
-#include "soc/hwcrypto_reg.h"   /* S3: SHA-Register liegen hier, nicht in sha_reg.h */
-#include "soc/dport_access.h"
+#include "soc/hwcrypto_reg.h"      /* S3: SHA-Register liegen hier */
 #include "hal/sha_ll.h"
 #include "sha/sha_core.h"          /* esp_sha_acquire/release_hardware */
 
@@ -14,56 +13,115 @@
 #define BM24_SHA_LOCK_CHUNK 8192
 #endif
 
-/* ---- Registerpfad, 1:1 die in 1.x vermessene Fassung ------------------- */
+/* ---------------------------------------------------------------------------
+   Registerpfad, uebernommen aus der vermessenen 1.8.3-bm1 (~980 Takte/Hash).
 
+   BYTE-REIHENFOLGE, die Falle: Die Textregister nehmen die Nachrichtenwoerter
+   BYTEVERDREHT entgegen, die H-Register dagegen normal. Man sieht es an den
+   Konstanten: das Padding-Byte 0x80 steht als 0x00000080 statt 0x80000000,
+   die Laenge 640 Bit (0x280) als 0x80020000. Ein erster Portierungsversuch
+   hat die Header-Woerter big-endian konvertiert — das Ergebnis wich von der
+   Referenz ab, und der Selbstschutz hat den Pfad korrekt abgeschaltet.
+   Deshalb hier: Woerter roh uebernehmen, nicht konvertieren.
 
+   IDF 5.5: Der Modus wird nach jedem Nehmen der Sperre neu gesetzt. Die
+   SHA-Funktionen tun das seit 5.5 nicht mehr implizit, und Takt- und
+   Reset-Register werden von AES, SHA und MPI geteilt.
+   --------------------------------------------------------------------------- */
 
-
-
-
-/* liest den Digest nur, wenn die letzten 16 Bit null sind (Kandidat) */
-
-/* ---- ein Hash: Midstate laden, Block 2, dann Hash-vom-Hash ------------- */
-
-/* Ein Hash ueber die dokumentierte SHA-API von IDF 5.5.
-   Der rohe Registerpfad aus 1.x (SHA_CONTINUE_REG/SHA_START_REG direkt)
-   blieb hier nach dem ersten Abschnitt stehen: seit 5.5 setzen die
-   SHA-Funktionen den Modus nicht mehr implizit, und AES/SHA/MPI teilen
-   sich Steuerregister, deren Zugriff jetzt gekapselt ist. Siehe
-   Migration Guide 5.5 (Security) und espressif/esp-idf@7761b0f. */
-static bool IRAM_ATTR hw_one_hash(const uint32_t mid[8],
-                                  const uint8_t block2[64],
-                                  uint32_t out[8])
+static inline void ll_zero_const_text(void)
 {
-    uint32_t state[8];
-    memcpy(state, mid, sizeof(state));
-
-    esp_sha_set_mode(SHA2_256);
-    esp_sha_write_digest_state(SHA2_256, state);
-    esp_sha_block(SHA2_256, block2, false);
-    esp_sha_read_digest_state(SHA2_256, state);
-
-    /* zweiter SHA ueber die 32 Ergebnisbytes: ein voller Block */
-    uint8_t inner[64] = {0};
-    for (int i = 0; i < 8; ++i) {
-        inner[i * 4 + 0] = (uint8_t)(state[i] >> 24);
-        inner[i * 4 + 1] = (uint8_t)(state[i] >> 16);
-        inner[i * 4 + 2] = (uint8_t)(state[i] >> 8);
-        inner[i * 4 + 3] = (uint8_t)state[i];
-    }
-    inner[32] = 0x80;
-    inner[62] = 0x01;   /* Laenge 256 Bit */
-
-    esp_sha_set_mode(SHA2_256);
-    esp_sha_block(SHA2_256, inner, true);
-    esp_sha_read_digest_state(SHA2_256, out);
-
-    return ((out[7] & 0xFFFF0000u) == 0);
+    uint32_t *t = (uint32_t *)SHA_TEXT_BASE;
+    for (int i = 9; i <= 14; ++i)
+        REG_WRITE(&t[i], 0);
 }
 
+/* Block 2 des Headers: 12 Byte Rest + Nonce + Padding + Laenge */
+static inline void ll_fill_block1(const uint32_t tail3[3], uint32_t nonce)
+{
+    uint32_t *t = (uint32_t *)SHA_TEXT_BASE;
+    REG_WRITE(&t[0], tail3[0]);
+    REG_WRITE(&t[1], tail3[1]);
+    REG_WRITE(&t[2], tail3[2]);
+    REG_WRITE(&t[3], nonce);
+    REG_WRITE(&t[4], 0x00000080);   /* 0x80-Padding, byteverdreht */
+    REG_WRITE(&t[5], 0);
+    REG_WRITE(&t[6], 0);
+    REG_WRITE(&t[7], 0);
+    REG_WRITE(&t[8], 0);
+    /* [9..14] bleiben null, einmal je Sperr-Abschnitt geschrieben */
+    REG_WRITE(&t[15], 0x80020000);  /* 640 Bit, byteverdreht */
+}
 
-/* Digest-Woerter (big-endian Werte) in Byte-Reihenfolge der Referenz */
-static void digest_words_to_bytes(const uint32_t w[8], uint8_t out[32])
+/* zweiter SHA: das Ergebnis des ersten wird zur Nachricht */
+static inline void ll_fill_block2_from_digest(void)
+{
+    uint32_t *t = (uint32_t *)SHA_TEXT_BASE;
+    uint32_t *h = (uint32_t *)SHA_H_BASE;
+    for (int i = 0; i < 8; ++i)
+        REG_WRITE(&t[i], REG_READ(&h[i]));
+    REG_WRITE(&t[8], 0x00000080);
+    REG_WRITE(&t[15], 0x00010000);  /* 256 Bit, byteverdreht */
+}
+
+static inline void ll_write_digest(const uint32_t d[8])
+{
+    uint32_t *h = (uint32_t *)SHA_H_BASE;
+    for (int i = 0; i < 8; ++i)
+        REG_WRITE(&h[i], d[i]);
+}
+
+static inline void ll_wait_idle(void)
+{
+    while (REG_READ(SHA_BUSY_REG)) {}
+}
+
+static inline void ll_read_digest(uint32_t out[8])
+{
+    uint32_t *h = (uint32_t *)SHA_H_BASE;
+    for (int i = 0; i < 8; ++i)
+        out[i] = REG_READ(&h[i]);
+}
+
+/* true, wenn die letzten 16 Bit null sind; liest dann den vollen Digest */
+static inline bool ll_read_digest_if(uint32_t out[8])
+{
+    uint32_t *h = (uint32_t *)SHA_H_BASE;
+    uint32_t last = REG_READ(&h[7]);
+    if ((last & 0xFFFF0000u) != 0)
+        return false;
+    out[7] = last;
+    for (int i = 0; i < 7; ++i)
+        out[i] = REG_READ(&h[i]);
+    return true;
+}
+
+static inline void IRAM_ATTR hw_hash_core(const uint32_t mid[8],
+                                          const uint32_t tail3[3],
+                                          uint32_t nonce)
+{
+    ll_write_digest(mid);
+    ll_fill_block1(tail3, nonce);
+    REG_WRITE(SHA_CONTINUE_REG, 1);
+    sha_ll_load(SHA2_256);
+    ll_wait_idle();
+
+    ll_fill_block2_from_digest();
+    REG_WRITE(SHA_START_REG, 1);
+    sha_ll_load(SHA2_256);
+    ll_wait_idle();
+}
+
+/* Sperre nehmen und den Baustein in den Zustand bringen, den der Hot-Loop
+   erwartet. Seit IDF 5.5 gehoert das Setzen des Modus zwingend hierher. */
+static inline void hw_begin(void)
+{
+    esp_sha_acquire_hardware();
+    REG_WRITE(SHA_MODE_REG, SHA2_256);
+    ll_zero_const_text();
+}
+
+static void words_to_bytes(const uint32_t w[8], uint8_t out[32])
 {
     for (int i = 0; i < 8; ++i) {
         out[i * 4 + 0] = (uint8_t)(w[i] >> 24);
@@ -73,28 +131,29 @@ static void digest_words_to_bytes(const uint32_t w[8], uint8_t out[32])
     }
 }
 
+/* Header-Bytes 64..75 als rohe Woerter, ohne Konvertierung (siehe oben) */
+static void header_tail3(const uint8_t header80[80], uint32_t tail3[3])
+{
+    memcpy(tail3, header80 + 64, 12);
+}
+
 bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
                                 uint32_t nonce_start, uint32_t count)
 {
     bm24_hw_result r = {0};
 
-    uint32_t mid[8], hw[8];
+    uint32_t mid[8], tail3[3], hw[8];
     uint8_t  patched[80], want[32], got[32];
-    uint8_t  block2[64] = {0};
 
-    /* Treffer werden WAEHREND des Chunks nur gemerkt, nie sofort geprueft.
-       Die Sperre auf das SHA-Werk mittendrin freizugeben und neu zu nehmen
-       liess den Miner nach dem ersten Durchlauf stehen; die Nachrechnung
-       gehoert hinter das Freigeben. Bei 2^-16 Trefferquote passen 16
-       Plaetze bequem auf einen 8192er-Chunk. */
+    /* Treffer werden waehrend des Abschnitts nur gemerkt und erst nach dem
+       Freigeben der Sperre nachgerechnet. Die Sperre mittendrin abzugeben
+       ist unnoetig und war fehleranfaellig. */
     uint32_t hit_nonce[16];
     uint32_t hit_words[16][8];
 
     bm24_sha_midstate(header80, mid);
+    header_tail3(header80, tail3);
     memcpy(patched, header80, 80);
-    memcpy(block2, header80 + 64, 12);   /* Rest des Headers */
-    block2[16] = 0x80;                   /* Padding fuer 80 Byte */
-    block2[62] = 0x02; block2[63] = 0x80;/* Laenge 640 Bit */
 
     uint32_t done = 0;
     while (done < count) {
@@ -102,19 +161,11 @@ bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
         if (chunk > BM24_SHA_LOCK_CHUNK) chunk = BM24_SHA_LOCK_CHUNK;
 
         int hits = 0;
-        /* Diagnose: Sperre nur EINMAL nehmen. IDF 5.5 setzt den Baustein
-           beim Freigeben zurueck (sha_ll_reset_register in
-           esp_sha_acquire_hardware), was den Registerpfad aus 1.x nach dem
-           ersten Abschnitt stehen liess. */
-        esp_sha_acquire_hardware();
-
+        hw_begin();
         for (uint32_t i = 0; i < chunk; ++i) {
             uint32_t nonce = nonce_start + done + i;
-            block2[12] = (uint8_t)nonce;
-            block2[13] = (uint8_t)(nonce >> 8);
-            block2[14] = (uint8_t)(nonce >> 16);
-            block2[15] = (uint8_t)(nonce >> 24);
-            if (hw_one_hash(mid, block2, hw) && hits < 16) {
+            hw_hash_core(mid, tail3, nonce);
+            if (ll_read_digest_if(hw) && hits < 16) {
                 hit_nonce[hits] = nonce;
                 memcpy(hit_words[hits], hw, sizeof(hw));
                 hits++;
@@ -123,7 +174,7 @@ bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
         esp_sha_release_hardware();
 
         for (int k = 0; k < hits; ++k) {
-            digest_words_to_bytes(hit_words[k], got);
+            words_to_bytes(hit_words[k], got);
             uint32_t n = hit_nonce[k];
             patched[76] = (uint8_t)n;
             patched[77] = (uint8_t)(n >> 8);
@@ -142,24 +193,27 @@ bm24_hw_result bm24_sha_hw_scan(const uint8_t header80[80],
 
 bool bm24_sha_hw_selftest(int n)
 {
-    uint8_t header[80], want[32], got[32], block2[64];
-    uint32_t mid[8], hw[8];
+    uint8_t header[80], want[32], got[32];
+    uint32_t mid[8], tail3[3], hw[8];
 
     for (int v = 0; v < n; ++v) {
         for (int i = 0; i < 80; ++i)
             header[i] = (uint8_t)(v * 131 + i * 37 + 11);
 
         bm24_sha_midstate(header, mid);
-        memset(block2, 0, sizeof(block2));
-        memcpy(block2, header + 64, 16);   /* inkl. Nonce aus dem Header */
-        block2[16] = 0x80;
-        block2[62] = 0x02; block2[63] = 0x80;
+        header_tail3(header, tail3);
+        uint32_t nonce;
+        memcpy(&nonce, header + 76, 4);
 
-        esp_sha_acquire_hardware();
-        hw_one_hash(mid, block2, hw);      /* Rueckgabe egal, out ist immer voll */
+        hw_begin();
+        hw_hash_core(mid, tail3, nonce);
+        /* IMMER den vollen Digest lesen — nie die Filterfunktion als
+           Referenz nehmen (die 1.x-Falle, die dort den Selbsttest
+           sabotiert hat). */
+        ll_read_digest(hw);
         esp_sha_release_hardware();
 
-        digest_words_to_bytes(hw, got);
+        words_to_bytes(hw, got);
         bm24_double_sha(header, 80, want);
         if (memcmp(want, got, 32) != 0)
             return false;

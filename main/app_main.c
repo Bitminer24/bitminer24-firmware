@@ -86,6 +86,8 @@ void app_main(void)
         }
         printf("Selbsttest: Midstate SW == Referenz\n");
     }
+    printf("Selbsttest HW-Werk: %s\n",
+           bm24_sha_hw_selftest(64) ? "64/64 == Referenz" : "FEHLGESCHLAGEN");
 
     temperature_sensor_handle_t tsens = NULL;
     temperature_sensor_config_t tcfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 100);
