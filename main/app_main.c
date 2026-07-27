@@ -123,14 +123,7 @@ static void dashboard_status(char *json, size_t capacity)
 static void supervisor_task(void *arg)
 {
     (void)arg;
-    esp_task_wdt_config_t watchdog = {
-        .timeout_ms = 12000,
-        .idle_core_mask = 0,
-        .trigger_panic = true
-    };
-    bool watchdog_added =
-        esp_task_wdt_init(&watchdog) == ESP_OK &&
-        esp_task_wdt_add(NULL) == ESP_OK;
+    bool watchdog_added = esp_task_wdt_add(NULL) == ESP_OK;
 
     uint32_t last_generation = 0;
     uint64_t last_hw = 0, last_sw = 0;
@@ -168,6 +161,34 @@ static void supervisor_task(void *arg)
         } else {
             /* Ohne Temperaturmessung ist nur das kuehlere HW-Werk erlaubt. */
             bm24_miner_set_sw_duty(0);
+        }
+
+        /* Freien Speicher im Auge behalten. Ein langsames Leck faellt sonst
+           erst auf, wenn ein TLS-Aufbau scheitert oder das Geraet abstuerzt.
+           Gemeldet wird nur bei neuem Tiefstand unterhalb der Schwelle,
+           damit das Protokoll nicht zulaeuft. */
+        static uint32_t heap_low = UINT32_MAX;
+        uint32_t heap_free = (uint32_t)esp_get_free_heap_size();
+        if (heap_free < 60000 && heap_free < heap_low) {
+            heap_low = heap_free;
+            ESP_LOGW(TAG, "Wenig freier Speicher: %" PRIu32 " Byte", heap_free);
+        }
+
+        /* Job-Stillstand erkennen: der Pool-Task darf lange blockierend
+           warten, aber wenn eine bestehende Verbindung ueber zehn Minuten
+           keinen neuen Job mehr liefert, ist sie tot und nur der Socket
+           weiss es noch nicht. Neu verbinden statt still weiterrechnen. */
+        static uint64_t last_jobs = 0;
+        static uint32_t job_idle_seconds = 0;
+        if (pool.connected && pool.jobs == last_jobs) {
+            if (++job_idle_seconds >= 600) {
+                job_idle_seconds = 0;
+                ESP_LOGW(TAG, "Zehn Minuten ohne neuen Job, Pool neu verbinden");
+                bm24_pool_reconnect();
+            }
+        } else {
+            job_idle_seconds = 0;
+            last_jobs = pool.jobs;
         }
 
         if (miner.active && miner.hw_trusted && hw_rate == 0) {
@@ -241,6 +262,20 @@ void app_main(void)
     }
     if (nvs != ESP_OK)
         fatal_boot("NVS INIT", pending_verify);
+
+    /* Der Aufbau steht jetzt in app_main, bevor irgendein Task startet.
+       Vorher richtete ihn der Supervisor selbst ein, und der Metrik-Task
+       war schneller — sein esp_task_wdt_add lief ins Leere. */
+    esp_task_wdt_config_t watchdog = {
+        /* 12 s waren zu knapp, seit auch Pool- und Metrik-Task ueberwacht
+           werden: ein einzelner HTTPS-Abruf darf allein 7 s dauern, dazu
+           kommt der TLS-Aufbau. 40 s faengt echte Haenger immer noch,
+           loest aber bei langsamem Netz keinen Fehlalarm aus. */
+        .timeout_ms = 40000,
+        .idle_core_mask = 0,
+        .trigger_panic = true
+    };
+    esp_task_wdt_init(&watchdog);
 
     s_display_ready = bm24_display_start();
     if (!s_display_ready)

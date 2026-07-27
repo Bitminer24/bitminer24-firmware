@@ -36,4 +36,8 @@ void bm24_pool_get_stats(bm24_pool_stats *out);
 }
 #endif
 
+/* Neuaufbau der Pool-Sitzung anfordern (Jobs bleiben aus, Socket wirkt
+   aber noch offen). */
+void bm24_pool_reconnect(void);
+
 #endif /* BM24_POOL_H */

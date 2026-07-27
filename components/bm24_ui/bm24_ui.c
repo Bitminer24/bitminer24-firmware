@@ -56,13 +56,6 @@ static void format_rate_bare(double khs, char *out, size_t capacity)
     snprintf(out, capacity, "%.1f", khs);
 }
 
-static void format_rate(double khs, char *out, size_t capacity)
-{
-    if (khs >= 1000.0)
-        snprintf(out, capacity, "%.2f MH/S", khs / 1000.0);
-    else
-        snprintf(out, capacity, "%.1f KH/S", khs);
-}
 
 static void format_difficulty(double difficulty, char *out, size_t capacity)
 {

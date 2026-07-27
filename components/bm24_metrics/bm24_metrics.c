@@ -11,6 +11,7 @@
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
+#include "esp_task_wdt.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
@@ -373,6 +374,7 @@ static void metrics_task(void *arg)
 {
     (void)arg;
 
+    bool guarded = esp_task_wdt_add(NULL) == ESP_OK;
     uint32_t due[ENDPOINT_COUNT];
     uint32_t started = now_ms();
     for (uint32_t i = 0; i < ENDPOINT_COUNT; ++i)
@@ -380,6 +382,8 @@ static void metrics_task(void *arg)
     uint32_t last_fetch = started - FETCH_GAP_MS;
 
     for (;;) {
+        if (guarded)
+            esp_task_wdt_reset();
         if (!bm24_network_wait_connected(10000))
             continue;
         if (bm24_network_sync_time(15000)) {

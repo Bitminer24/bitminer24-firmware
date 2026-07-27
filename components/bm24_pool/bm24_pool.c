@@ -47,6 +47,8 @@ typedef struct {
     pending_submit submits[BM24_PENDING_SUBMITS];
 } pool_session;
 
+static volatile bool s_reconnect_requested;
+
 static const char *TAG = "bm24_pool";
 static bm24_config s_config;
 static bm24_pool_stats s_stats;
@@ -376,6 +378,13 @@ static bool run_session(esp_tls_t *transport)
 
     size_t line_length = 0;
     for (;;) {
+        /* Von aussen angeforderter Neuaufbau: die Sitzung wird verlassen,
+           die Schleife im Task verbindet danach neu. */
+        if (s_reconnect_requested) {
+            s_reconnect_requested = false;
+            ESP_LOGW(TAG, "Neuaufbau angefordert");
+            return false;
+        }
         bm24_miner_share share;
         while (bm24_miner_get_share(&share, 0)) {
             if (!submit_share(&session, &share))
@@ -434,6 +443,11 @@ static void pool_task(void *arg)
     (void)arg;
     uint32_t failures = 0;
     uint32_t low_water = UINT32_MAX;
+    /* BEWUSST OHNE Task-Watchdog: dieser Task wartet zwischen zwei Jobs
+       voellig regulaer minutenlang blockierend am Netz. Ein Watchdog haelt
+       das faelschlich fuer einen Haenger und startet das Geraet mitten im
+       Betrieb neu — genau das ist beim ersten Versuch passiert. Ueberwacht
+       wird stattdessen im Supervisor, ob ueberhaupt noch Jobs eintreffen. */
     for (;;) {
         /* Kleinsten je gesehenen Stapelrest melden, wenn er neu unterboten
            wird. So faellt eine schrumpfende Reserve auf, bevor sie zum
@@ -510,4 +524,12 @@ void bm24_pool_get_stats(bm24_pool_stats *out)
     portENTER_CRITICAL(&s_stats_lock);
     memcpy(out, &s_stats, sizeof(*out));
     portEXIT_CRITICAL(&s_stats_lock);
+}
+
+/* Von aussen anstossen, dass die Pool-Sitzung neu aufgebaut wird. Wird
+   genutzt, wenn ueber lange Zeit kein Job mehr eintraf: die Verbindung
+   sieht dann noch offen aus, liefert aber nichts mehr. */
+void bm24_pool_reconnect(void)
+{
+    s_reconnect_requested = true;
 }
