@@ -9,6 +9,7 @@
 
 #define BM24_NVS_NAMESPACE "bm24"
 #define BM24_NVS_CONFIG_KEY "config"
+#define BM24_NVS_STATS_KEY  "stats"
 
 static bool bounded_string(const char *value, size_t capacity, size_t *length)
 {
@@ -70,6 +71,9 @@ void bm24_config_defaults(bm24_config *config)
     strcpy(config->pool_host, "public-pool.io");
     strcpy(config->pool_password, "x");
     config->pool_port = 3333;
+    config->brightness = 130;      /* in 1.x vermessener Wert           */
+    config->invert_colors = false;
+    config->timezone_offset = 1;   /* Europe/Berlin mit Sommerzeit      */
 }
 
 bm24_config_status bm24_config_validate(const bm24_config *config)
@@ -116,6 +120,11 @@ bm24_config_status bm24_config_load(bm24_config *config)
     if (err != ESP_OK)
         return BM24_CONFIG_STORAGE_ERROR;
 
+    /* Kleinere Datensaetze sind aeltere Schemata und werden angehoben.
+       Die Vorgabewerte stehen schon im Puffer, ein kuerzerer Blob
+       ueberschreibt nur den vorderen Teil — die neuen Felder behalten
+       damit ihre Vorgaben. Wer aus 1.x kommt, verliert so weder WLAN
+       noch Adresse. */
     size_t size = sizeof(*config);
     err = nvs_get_blob(handle, BM24_NVS_CONFIG_KEY, config, &size);
     nvs_close(handle);
@@ -123,9 +132,14 @@ bm24_config_status bm24_config_load(bm24_config *config)
         bm24_config_defaults(config);
         return BM24_CONFIG_NOT_FOUND;
     }
-    if (err != ESP_OK || size != sizeof(*config)) {
+    if (err != ESP_OK || size > sizeof(*config)) {
         bm24_config_defaults(config);
         return BM24_CONFIG_STORAGE_ERROR;
+    }
+    if (config->schema_version < BM24_CONFIG_SCHEMA_VERSION) {
+        if (config->brightness == 0)
+            config->brightness = 130;
+        config->schema_version = BM24_CONFIG_SCHEMA_VERSION;
     }
     return bm24_config_validate(config);
 }
@@ -198,3 +212,49 @@ const char *bm24_config_status_string(bm24_config_status status)
     default:                        return "unknown";
     }
 }
+
+/* Ab hier wieder geraeteabhaengig: die Host-Tests pruefen nur die reine
+   Logik und kennen kein NVS. */
+#ifdef ESP_PLATFORM
+
+void bm24_stats_load(bm24_runtime_stats *stats)
+{
+    if (!stats)
+        return;
+    memset(stats, 0, sizeof(*stats));
+    nvs_handle_t handle;
+    if (nvs_open(BM24_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK)
+        return;
+    size_t size = sizeof(*stats);
+    if (nvs_get_blob(handle, BM24_NVS_STATS_KEY, stats, &size) != ESP_OK ||
+        size != sizeof(*stats))
+        memset(stats, 0, sizeof(*stats));
+    nvs_close(handle);
+}
+
+void bm24_stats_save(const bm24_runtime_stats *stats)
+{
+    if (!stats)
+        return;
+    nvs_handle_t handle;
+    if (nvs_open(BM24_NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK)
+        return;
+    if (nvs_set_blob(handle, BM24_NVS_STATS_KEY, stats, sizeof(*stats)) == ESP_OK)
+        nvs_commit(handle);
+    nvs_close(handle);
+}
+
+#else  /* Host: Zaehler bleiben fluechtig, damit die Logik testbar bleibt */
+
+void bm24_stats_load(bm24_runtime_stats *stats)
+{
+    if (stats)
+        memset(stats, 0, sizeof(*stats));
+}
+
+void bm24_stats_save(const bm24_runtime_stats *stats)
+{
+    (void)stats;
+}
+
+#endif /* ESP_PLATFORM */

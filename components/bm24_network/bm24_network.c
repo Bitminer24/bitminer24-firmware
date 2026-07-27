@@ -74,7 +74,20 @@ static const char PORTAL_TAIL[] =
     "value=3333 required></label>"
     "<label>Pool-Passwort<input name=pool_password maxlength=128 value=x></label>"
     "<label><span><input name=pool_tls type=checkbox value=1> TLS verwenden"
-    "</span></label><button>Speichern und starten</button></form>"
+    "</span></label>"
+    "<h2>Anzeige</h2>"
+    "<label>Helligkeit<input name=brightness type=range min=10 max=255 "
+    "value=130></label>"
+    "<label><span><input name=invert type=checkbox value=1> Helles Thema"
+    "</span></label>"
+    "<label>Zeitzone (Stunden zu UTC)"
+    "<select name=timezone>"
+    "<option value=1 selected>Deutschland, Oesterreich, Schweiz (Sommerzeit)"
+    "</option>"
+    "<option value=0>UTC</option><option value=2>UTC+2</option>"
+    "<option value=-5>UTC-5</option><option value=-8>UTC-8</option>"
+    "</select><small>Nur die erste Wahl stellt automatisch um.</small></label>"
+    "<button>Speichern und starten</button></form>"
     "<p><small>Setup-WLAN ist WPA2-geschuetzt. Die Daten werden versioniert "
     "im NVS gespeichert.</small></p><hr><h2>Firmware-Update</h2>"
     "<p>Nur eine BitMiner24 <code>firmware.bin</code> auswaehlen.</p>"
@@ -471,6 +484,23 @@ static esp_err_t portal_save(httpd_req_t *req)
     config.pool_tls =
         form_value(form, "pool_tls", tls_text, sizeof(tls_text)) &&
         strcmp(tls_text, "1") == 0;
+    config.invert_colors =
+        form_value(form, "invert", tls_text, sizeof(tls_text)) &&
+        strcmp(tls_text, "1") == 0;
+
+    /* Anzeigewerte sind Komfort, kein Muss: fehlen oder stoeren sie, bleibt
+       es bei den Vorgaben, statt die ganze Einrichtung abzulehnen. */
+    char text[8];
+    if (form_value(form, "brightness", text, sizeof(text))) {
+        unsigned long value = strtoul(text, NULL, 10);
+        if (value >= 10 && value <= 255)
+            config.brightness = (uint8_t)value;
+    }
+    if (form_value(form, "timezone", text, sizeof(text))) {
+        long value = strtol(text, NULL, 10);
+        if (value >= -12 && value <= 14)
+            config.timezone_offset = (int8_t)value;
+    }
     free(form);
 
     char *end = NULL;

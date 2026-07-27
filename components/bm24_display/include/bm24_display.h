@@ -29,6 +29,8 @@ typedef struct {
 bool bm24_display_start(void);
 void bm24_display_set(const bm24_display_frame *frame);
 void bm24_display_setup(const char *ssid, const char *password);
+/* Vom Portal gesetzte Anzeigewerte uebernehmen. Helligkeit 10..255. */
+void bm24_display_apply_settings(uint8_t brightness, bool invert);
 void bm24_display_toggle_enabled(void);
 void bm24_display_toggle_rotation(void);
 

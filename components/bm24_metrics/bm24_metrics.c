@@ -356,11 +356,22 @@ static bool fetch_endpoint(endpoint_id endpoint)
     }
 }
 
+void bm24_metrics_set_timezone(int8_t utc_offset_hours)
+{
+    if (utc_offset_hours == 1) {
+        setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+    } else {
+        /* POSIX dreht das Vorzeichen um: UTC+2 schreibt sich als UTC-2. */
+        char tz[16];
+        snprintf(tz, sizeof(tz), "UTC%+d", -utc_offset_hours);
+        setenv("TZ", tz, 1);
+    }
+    tzset();
+}
+
 static void metrics_task(void *arg)
 {
     (void)arg;
-    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
-    tzset();
 
     uint32_t due[ENDPOINT_COUNT];
     uint32_t started = now_ms();

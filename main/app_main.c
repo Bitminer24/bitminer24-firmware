@@ -84,6 +84,12 @@ static struct {
     uint64_t uptime;
 } s_live;
 
+/* Zaehler ueber Neustarts hinweg. Wird beim Start geladen, alle fuenf
+   Minuten gesichert — oft genug, um bei einem Stromausfall wenig zu
+   verlieren, selten genug, um den Flash nicht zu verschleissen. */
+static bm24_runtime_stats s_persisted;
+static uint64_t s_accepted_base;   /* Shares aus frueheren Sitzungen */
+
 static void dashboard_status(char *json, size_t capacity)
 {
     bm24_miner_stats miner;
@@ -97,7 +103,7 @@ static void dashboard_status(char *json, size_t capacity)
     if (metrics.pool_stats_valid && metrics.pool_best_difficulty > best)
         best = metrics.pool_best_difficulty;
 
-    uint64_t up = s_live.uptime;
+    uint64_t up = s_persisted.total_seconds;   /* ueber alle Starts */
     char uptime[24];
     snprintf(uptime, sizeof(uptime), "%ud %02uh %02um",
              (unsigned)(up / 86400), (unsigned)((up / 3600) % 24),
@@ -177,6 +183,20 @@ static void supervisor_task(void *arg)
             bm24_miner_clear_job();
         }
 
+        /* Gesamtlaufzeit und Bestmarke fortschreiben und gelegentlich
+           sichern; sie sollen einen Stromausfall ueberstehen. */
+        s_persisted.total_seconds++;
+        /* Die Pool-Zaehler starten bei jedem Boot bei null; addiert wird
+           deshalb der Stand dieser Sitzung auf den gemerkten Sockel. */
+        s_persisted.accepted = s_accepted_base + pool.accepted;
+        if (pool.best_difficulty > s_persisted.best_difficulty)
+            s_persisted.best_difficulty = pool.best_difficulty;
+        static uint32_t save_countdown = 300;
+        if (--save_countdown == 0) {
+            save_countdown = 300;
+            bm24_stats_save(&s_persisted);
+        }
+
         s_live.khs = (hw_rate + sw_rate) / 1000.0;
         s_live.temperature = temperature;
         s_live.uptime = (uint64_t)(esp_timer_get_time() / 1000000);
@@ -185,8 +205,7 @@ static void supervisor_task(void *arg)
             .hw_khs = hw_rate / 1000.0,
             .sw_khs = sw_rate / 1000.0,
             .temperature_c = temperature,
-            .uptime_seconds =
-                (uint64_t)(esp_timer_get_time() / 1000000),
+            .uptime_seconds = s_persisted.total_seconds,
             .miner = miner,
             .pool = pool,
             .network = network
@@ -269,7 +288,15 @@ void app_main(void)
 
     /* Pool-seitige Statistik braucht Host und Adresse; sie zeigt auch
        weitere Miner auf derselben Adresse und die Bestmarke des Pools. */
+    bm24_stats_load(&s_persisted);
+    s_persisted.restarts++;
+    s_accepted_base = s_persisted.accepted;
+    ESP_LOGI(TAG, "Start %u, Gesamtlaufzeit bisher %" PRIu64 " s",
+             (unsigned)s_persisted.restarts, s_persisted.total_seconds);
+
     bm24_metrics_set_pool(config.pool_host, config.worker);
+    bm24_metrics_set_timezone(config.timezone_offset);
+    bm24_display_apply_settings(config.brightness, config.invert_colors);
 
     if (provisioned && !bm24_pool_start(&config))
         fatal_boot("POOL TASK", false);

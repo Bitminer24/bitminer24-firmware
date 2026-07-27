@@ -18,7 +18,7 @@
 #define LCD_HEIGHT      170
 #define LCD_BAND_HEIGHT 24
 #define LCD_PIXEL_CLOCK (10 * 1000 * 1000)
-#define BACKLIGHT_DUTY   130u
+#define BACKLIGHT_DUTY   130u   /* Vorgabe; ueberschreibbar aus der Konfiguration */
 
 #define PIN_POWER 15
 #define PIN_BL    38
@@ -107,6 +107,8 @@ static const uint16_t *s_background;   /* aktuelle Hintergrundgrafik, im Flash *
 static bm24_display_frame s_frame;
 static TaskHandle_t s_task;
 static bool s_backlight_enabled = true;
+static uint8_t s_brightness = BACKLIGHT_DUTY;
+static bool s_invert;
 static bool s_flipped;
 
 static bool backlight_init(void)
@@ -134,7 +136,7 @@ static bool backlight_init(void)
 static void backlight_apply(void)
 {
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0,
-                  s_backlight_enabled ? BACKLIGHT_DUTY : 0);
+                  s_backlight_enabled ? s_brightness : 0);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 }
 
@@ -419,6 +421,19 @@ void bm24_display_setup(const char *ssid, const char *password)
     bm24_display_frame frame = {0};
     frame.background = bm24_img_setup;
     bm24_display_set(&frame);
+}
+
+void bm24_display_apply_settings(uint8_t brightness, bool invert)
+{
+    /* Ganz dunkel waere ein Geraet, das kaputt aussieht; nach unten
+       deshalb bei 10 begrenzt. */
+    s_brightness = brightness < 10u ? 10u : brightness;
+    s_invert = invert;
+    backlight_apply();
+    if (s_panel)
+        esp_lcd_panel_invert_color(s_panel, !s_invert);
+    if (s_task)
+        xTaskNotifyGive(s_task);
 }
 
 void bm24_display_toggle_enabled(void)

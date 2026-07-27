@@ -46,6 +46,11 @@ bool bm24_metrics_start(void);
 /* Pool und Arbeiteradresse fuer die Statistikabfrage setzen. Ohne Aufruf
    bleibt die Pool-Statistik einfach aus. */
 void bm24_metrics_set_pool(const char *host, const char *worker);
+
+/* Ortszeit setzen. Offset 1 bedeutet Europe/Berlin samt automatischer
+   Sommerzeit; jeder andere Wert ist ein fester Abstand zu UTC, weil die
+   Umstellungsregeln je Land verschieden sind. */
+void bm24_metrics_set_timezone(int8_t utc_offset_hours);
 void bm24_metrics_get(bm24_metrics_snapshot *out);
 
 #ifdef __cplusplus
