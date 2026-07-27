@@ -70,3 +70,63 @@ components/
 test/                38 Unity-Host-Tests (pio test -e native)
 partitions.csv       A/B-OTA-Layout, App ab 0x10000
 ```
+
+## Für Mitarbeit: bauen, flashen, Grafiken
+
+### Werkzeuge
+
+- PlatformIO (`pip install platformio`), holt ESP-IDF 5.5 und GCC 14.2 selbst
+- für die Host-Tests ein PC-GCC, unter Windows z. B.
+  `winget install BrechtSanders.WinLibs.POSIX.UCRT`
+
+### Bauen und aufs Gerät bringen
+
+```bash
+pio test -e native                                  # 38 Host-Tests, ohne Hardware
+pio run -e bm24-v2                                  # Firmware bauen
+pio run -e bm24-v2 -t upload --upload-port COM21    # flashen (Port anpassen)
+./tools/measure.sh "meine Variante" 150             # bauen, flashen, 150 s messen
+```
+
+**Wichtig:** PlatformIO schreibt `sdkconfig.bm24-v2` nur einmal und liest
+`sdkconfig.defaults` danach nie wieder. Wer an den Vorgaben etwas ändert,
+muss die Datei löschen, sonst wirkt die Änderung stillschweigend nicht.
+`tools/measure.sh` macht das automatisch.
+
+### Erste Einrichtung am Gerät
+
+Ohne gespeicherte Konfiguration öffnet das Gerät ein WLAN `BitMiner24-XXXXXX`.
+Verbinden, die Anmeldeseite öffnet sich von selbst (sonst `http://192.168.4.1`),
+eigenes WLAN aus der Liste wählen und die eigene BTC-Adresse eintragen. Die
+vorbelegte Adresse ist eine öffentliche Testadresse und muss ersetzt werden.
+
+Im Heimnetz zeigt das Gerät unter seiner IP ein Dashboard mit Live-Werten.
+Seitentaste kurz blättert, vier Sekunden öffnet das Setup, zehn Sekunden
+setzt auf Werkszustand zurück.
+
+### Grafiken
+
+Die fünf Bildschirme liegen als RGB565-Felder in
+`components/bm24_media/bm24_media.c`, jeweils 320×170. Sie stammen aus der
+1.x-Firmware und tragen ihre Beschriftungen im Bild; die Werte werden
+darüber gezeichnet.
+
+Eine eigene Grafik einsetzen:
+
+1. PNG in 320×170 anlegen. Beschriftungen gehören ins Bild, die Kästchen
+   für die Werte bleiben leer.
+2. Nach RGB565 wandeln und das Feld in `bm24_media.c` ersetzen; der Name
+   muss zu `bm24_media.h` passen.
+3. Die Koordinaten der Werte stehen in `components/bm24_ui/bm24_ui.c` bei
+   der jeweiligen Seite als `frame->slot[n] = {x, y, Größe, rechtsbündig}`.
+   `x` ist bei rechtsbündig die **rechte** Kante des Kästchens.
+
+**Offen und dankbar für Hilfe:** Die Solo-Tracker-Seite (Seite 5) hat noch
+keine Grafik und benutzt deshalb ein einfaches Textlayout. Sobald ein Bild
+vorliegt, bekommt sie Koordinaten wie die anderen vier.
+
+### Zustand
+
+Läuft auf dem Testgerät mit rund 300 kH/s bei 54 °C. Was gemessen wurde und
+was sich als Sackgasse erwiesen hat, steht in `MESSUNGEN.md` — bitte dort
+nachsehen, bevor jemand eine Optimierung erneut probiert.
