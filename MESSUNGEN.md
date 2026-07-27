@@ -173,3 +173,33 @@ gemessen worden.
 
 Bleibende Erkenntnis: Wer hier mehr Leistung sucht, muss an das SHA-Werk
 (DMA-Modus), nicht an die Uebersetzung.
+
+## 27.07.2026 — SHA-DMA: erledigt, der Registerpfad gewinnt klar
+
+Der letzte offene Leistungshebel, zeitlich begrenzt untersucht. Gemessen
+wurde dieselbe Kette je Hash (Midstate laden, Header-Block 2 rechnen,
+Digest lesen, zweiten SHA rechnen), einmal ueber Register und einmal ueber
+`esp_sha_dma()`, je 2000 Durchlaeufe mit dem CPU-Taktzaehler:
+
+| Weg | Takte je Hash | entspricht |
+|---|---|---|
+| Register (naive Fassung) | 1082 | 221,6 kH/s |
+| DMA | 4681 | **51,3 kH/s** |
+
+**DMA ist gut viermal langsamer.** Der Grund: DMA spielt seine Staerke nur
+bei vielen Bloecken am Stueck aus. Unsere Kette braucht zwischen den zwei
+Bloecken den Digest, also bleibt es bei einzelnen 64-Byte-Uebertragungen,
+und deren Einrichtung kostet ein Vielfaches von sechzehn
+Registerschreibvorgaengen.
+
+Der Vergleich ist fuer DMA sogar noch guenstig gerechnet: Die
+Register-Fassung im Versuch ist die naive Variante ohne
+ZERO_TEXT_ONCE und ohne gefiltertes Digest-Lesen. Der echte Miner liegt
+mit rund 890 Takten je Hash (270 kH/s) noch darunter.
+
+**Damit ist die Leistungssuche abgeschlossen.** Getestet und verworfen sind
+inzwischen: neuerer Compiler, kalibriertes Warten, Compiler-Optimierungs-
+stufen, QIO-Flashmodus und DMA. Was blieb, war das Abschaffen der
+Netzwerkpause (+10 kH/s). Der ESP32-S3 gibt ueber den Peripheriebus zum
+SHA-Werk nicht mehr her. Der Code bleibt unter `BM24_BENCH_DMA=1`
+reproduzierbar erhalten.

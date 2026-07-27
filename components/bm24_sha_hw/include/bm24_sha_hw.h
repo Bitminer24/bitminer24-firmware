@@ -43,6 +43,15 @@ bm24_hw_result bm24_sha_hw_scan_candidates(
     const uint8_t header80[80], uint32_t nonce_start, uint32_t count,
     bm24_hw_candidate_cb callback, void *context);
 
+#ifndef BM24_BENCH_DMA
+#define BM24_BENCH_DMA 0
+#endif
+
+#if BM24_BENCH_DMA
+/* Vergleich Registerpfad gegen DMA-Modus; meldet Takte je Hash. */
+void bm24_sha_bench_dma(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

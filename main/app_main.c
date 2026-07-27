@@ -22,6 +22,7 @@
 #include "bm24_display.h"
 #include "bm24_metrics.h"
 #include "bm24_miner.h"
+#include "bm24_sha_hw.h"
 #include "bm24_network.h"
 #include "bm24_pool.h"
 #include "bm24_ui.h"
@@ -292,6 +293,9 @@ void app_main(void)
     if (!bm24_miner_start())
         fatal_boot("SHA SELBSTTEST", pending_verify);
     ESP_LOGI(TAG, "SHA-Hardware-Selbsttest 64/64 bestanden");
+#if BM24_BENCH_DMA
+    bm24_sha_bench_dma();
+#endif
 
     bm24_config config;
     bm24_config_status config_status = bm24_config_load(&config);
