@@ -13,6 +13,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "lwip/sockets.h"
+#include "mbedtls/base64.h"
 #include "bm24_dashboard_html.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
@@ -259,6 +260,54 @@ static esp_err_t send_scan_options(httpd_req_t *req)
 
 /* JSON fuer das Dashboard. Ohne angemeldeten Lieferanten bleibt es leer,
    statt zu raten. */
+/* Schreibende Zugriffe absichern.
+
+   Im Setup-WLAN genuegt der WPA2-Schluessel: wer dort ist, hat sich bereits
+   ausgewiesen. Im Heimnetz ist das anders — dort ist der Webserver fuer
+   jedes Geraet im Netz erreichbar, und ohne Pruefung koennte jeder die
+   Wallet-Adresse aendern oder fremde Firmware aufspielen. Deshalb
+   verlangen /save und /ota dort HTTP-Basic-Auth mit dem Geraetepasswort. */
+static bool write_access_allowed(httpd_req_t *req)
+{
+    bool portal;
+    portENTER_CRITICAL(&s_status_lock);
+    portal = s_status.portal_active;
+    portEXIT_CRITICAL(&s_status_lock);
+    if (portal)
+        return true;
+
+    char header[128];
+    if (httpd_req_get_hdr_value_str(req, "Authorization", header,
+                                    sizeof(header)) != ESP_OK)
+        return false;
+    if (strncmp(header, "Basic ", 6) != 0)
+        return false;
+
+    unsigned char decoded[96];
+    size_t decoded_len = 0;
+    if (mbedtls_base64_decode(decoded, sizeof(decoded) - 1, &decoded_len,
+                              (const unsigned char *)header + 6,
+                              strlen(header + 6)) != 0)
+        return false;
+    decoded[decoded_len] = 0;
+
+    const char *colon = strchr((const char *)decoded, 0x3A);
+    if (!colon)
+        return false;
+    /* Benutzername ist beliebig, entscheidend ist das Passwort. */
+    return strcmp(colon + 1, BM24_SETUP_PASSWORD) == 0;
+}
+
+static esp_err_t deny_write(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_hdr(req, "WWW-Authenticate",
+                       "Basic realm=\"BitMiner24\"");
+    httpd_resp_sendstr(req,
+        "Anmeldung noetig. Passwort ist das des Setup-WLANs.");
+    return ESP_OK;
+}
+
 static esp_err_t status_get(httpd_req_t *req)
 {
     char json[512];
@@ -379,6 +428,8 @@ static void restart_task(void *arg)
 
 static esp_err_t portal_save(httpd_req_t *req)
 {
+    if (!write_access_allowed(req))
+        return deny_write(req);
     if (req->content_len <= 0 || req->content_len >= FORM_MAX) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Formular zu gross");
         return ESP_FAIL;
@@ -450,6 +501,8 @@ static esp_err_t portal_save(httpd_req_t *req)
 
 static esp_err_t portal_ota(httpd_req_t *req)
 {
+    if (!write_access_allowed(req))
+        return deny_write(req);
     const char *content_type = httpd_req_get_hdr_value_len(
         req, "Content-Type") ? "present" : NULL;
     char type[48] = {0};
