@@ -8,7 +8,7 @@ Informationen wurden entfernt, damit die Kernwerte lesbar bleiben.
 | Datei | Kerninhalt | Firmware-Array |
 |---|---|---|
 | `setup.png` | WLAN, Passwort, Verbindungs-QR | `bm24_img_setup` |
-| `miner.png` | Hashrate, Hashes, Temperatur, Anteile, beste Diff., Laufzeit | `bm24_img_miner` |
+| `miner.png` | Hashrate, bestätigte Blocktreffer, Hashes, Temperatur, Anteile, beste Diff., Laufzeit | `bm24_img_miner` |
 | `init.png` | Start- und WLAN-Status | `bm24_img_init` |
 | `clock.png` | Uhrzeit, Block, Preis, Hashrate | `bm24_img_clock` |
 | `network.png` | Netzwerk-Hashrate, Block, Halving, Gebühr, Schwierigkeit | `bm24_img_network` |
@@ -38,3 +38,8 @@ ZXing erfolgreich dekodiert.
 Die Live-Werte und ihre Koordinaten stehen in
 `components/bm24_ui/bm24_ui.c`. Darum müssen Änderungen an den leeren
 Wertefeldern immer mit diesen Slots abgestimmt werden.
+
+`BLOCK GEFUNDEN` ist ein dauerhafter Lebenszeitzähler. Er steigt nur, wenn
+ein Hash das Bitcoin-Netzwerkziel erreicht und genau dieser Submit vom Pool
+bestätigt wurde. Normale angenommene Shares und die aktuelle Blockhöhe werden
+nicht mitgezählt.

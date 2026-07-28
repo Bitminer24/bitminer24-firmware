@@ -58,6 +58,7 @@ typedef struct {
     uint64_t accepted;        /* angenommene Shares                      */
     double best_difficulty;   /* lokale Bestmarke                        */
     uint32_t restarts;        /* Anzahl Starts                           */
+    uint64_t found_blocks;    /* vom Pool bestaetigte Netzwerkbloecke    */
 } bm24_runtime_stats;
 
 void bm24_stats_load(bm24_runtime_stats *stats);

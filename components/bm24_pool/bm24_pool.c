@@ -28,6 +28,7 @@
 
 typedef struct {
     bool used;
+    bool network_block;
     uint32_t id;
 } pending_submit;
 
@@ -186,20 +187,25 @@ static bool activate_work(pool_session *session,
     return true;
 }
 
-static void remember_submit(pool_session *session, uint32_t id)
+static void remember_submit(pool_session *session, uint32_t id,
+                            bool network_block)
 {
     pending_submit *slot =
         &session->submits[id % BM24_PENDING_SUBMITS];
     slot->used = true;
+    slot->network_block = network_block;
     slot->id = id;
 }
 
-static bool take_submit(pool_session *session, uint32_t id)
+static bool take_submit(pool_session *session, uint32_t id,
+                        bool *network_block)
 {
     pending_submit *slot =
         &session->submits[id % BM24_PENDING_SUBMITS];
     if (!slot->used || slot->id != id)
         return false;
+    if (network_block)
+        *network_block = slot->network_block;
     slot->used = false;
     return true;
 }
@@ -224,14 +230,16 @@ static bool submit_share(pool_session *session,
         session->active_job.ntime_hex, share->nonce);
     if (!length || !transport_write_all(session->transport, wire, length))
         return false;
-    remember_submit(session, id);
+    remember_submit(session, id, share->network_block);
     portENTER_CRITICAL(&s_stats_lock);
     ++s_stats.submitted;
     if (share->difficulty > s_stats.best_difficulty)
         s_stats.best_difficulty = share->difficulty;
     portEXIT_CRITICAL(&s_stats_lock);
-    ESP_LOGI(TAG, "Share TX id=%" PRIu32 " diff=%.8g nonce=%08" PRIx32,
-             id, share->difficulty, share->nonce);
+    ESP_LOGI(TAG,
+             "Share TX id=%" PRIu32 " diff=%.8g nonce=%08" PRIx32 "%s",
+             id, share->difficulty, share->nonce,
+             share->network_block ? " NETZWERK-BLOCK" : "");
     return true;
 }
 
@@ -264,15 +272,23 @@ static bool process_response(pool_session *session,
         portEXIT_CRITICAL(&s_stats_lock);
         return true;
     }
-    if (take_submit(session, message->id)) {
+    bool network_block = false;
+    if (take_submit(session, message->id, &network_block)) {
         portENTER_CRITICAL(&s_stats_lock);
-        if (message->response_ok)
+        if (message->response_ok) {
             ++s_stats.accepted;
-        else
+            if (network_block)
+                ++s_stats.found_blocks;
+        } else {
             ++s_stats.rejected;
+        }
         portEXIT_CRITICAL(&s_stats_lock);
-        ESP_LOGI(TAG, "Share id=%" PRIu32 " %s", message->id,
-                 message->response_ok ? "AKZEPTIERT" : "ABGELEHNT");
+        if (network_block && message->response_ok)
+            ESP_LOGW(TAG, "BLOCK GEFUNDEN UND VOM POOL BESTAETIGT, id=%"
+                     PRIu32, message->id);
+        else
+            ESP_LOGI(TAG, "Share id=%" PRIu32 " %s", message->id,
+                     message->response_ok ? "AKZEPTIERT" : "ABGELEHNT");
     }
     return true;
 }

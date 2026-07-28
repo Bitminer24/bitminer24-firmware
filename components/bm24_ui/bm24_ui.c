@@ -108,13 +108,13 @@ static void format_clock(bool synced, char *out, size_t capacity)
 /* Koordinaten der nativen 320x170-Grafiken. Die Hintergruende tragen nur
    gut lesbare Kernbeschriftungen; hier werden die Live-Werte in die freien
    Felder geschrieben. x ist bei right = true die rechte Feldkante. */
-/* Miner: links aktuelle Hashrate und Gesamtzahl der Hashes, rechts
-   Temperatur, angenommene Anteile, beste Schwierigkeit und Laufzeit. */
+/* Miner: links aktuelle Hashrate, bestaetigte Blocktreffer und Gesamtzahl
+   der Hashes; rechts Temperatur, Anteile, beste Schwierigkeit und Laufzeit. */
 static void miner_page(const bm24_ui_state *state,
                        bm24_display_frame *frame)
 {
     frame->background = bm24_img_miner;
-    frame->slot_count = 6;
+    frame->slot_count = 7;
 
     bm24_metrics_snapshot metrics;
     bm24_metrics_get(&metrics);
@@ -146,6 +146,9 @@ static void miner_page(const bm24_ui_state *state,
     format_uptime(state->uptime_seconds, frame->line[5],
                   sizeof(frame->line[5]));
 
+    frame->slot[6] = (bm24_display_slot){184, 99, 2, true};
+    snprintf(frame->line[6], sizeof(frame->line[6]), "%" PRIu64,
+             state->found_blocks);
 }
 
 static void clock_page(const bm24_ui_state *state,

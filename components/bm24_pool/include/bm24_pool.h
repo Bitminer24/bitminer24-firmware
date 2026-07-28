@@ -20,6 +20,7 @@ typedef struct {
     uint64_t submitted;
     uint64_t accepted;
     uint64_t rejected;
+    uint64_t found_blocks;
     uint64_t stale;
     uint64_t reconnects;
     uint64_t protocol_errors;

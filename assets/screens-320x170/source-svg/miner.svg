@@ -13,6 +13,8 @@
   <text x="16" y="45" font-family="Arial" font-size="11" font-weight="700" fill="#f4f5f6">AKTUELLE HASHRATE</text>
   <line x1="16" y1="51" x2="184" y2="51" stroke="#3b260f"/>
   <text x="158" y="84" font-family="Arial" font-size="11" font-weight="700" fill="#ff8a00">KH/S</text>
+  <line x1="16" y1="93" x2="184" y2="93" stroke="#3b260f"/>
+  <text x="16" y="109" font-family="Arial" font-size="9.5" font-weight="700" fill="#aeb3b8">BLOCK GEFUNDEN</text>
 
   <rect x="8" y="126" width="184" height="36" rx="5" fill="#0b0e10" stroke="#58401f"/>
   <text x="15" y="142" font-family="Arial" font-size="10" font-weight="700" fill="#aeb3b8">HASHES GESAMT</text>

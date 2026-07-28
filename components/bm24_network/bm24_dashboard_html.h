@@ -36,6 +36,7 @@ static const char DASHBOARD_HTML[] =
 "      card('Hashrate',s.khs.toFixed(1)+' kH/s')+\n"
 "      card('Temperatur',s.temp.toFixed(1)+' C')+\n"
 "      card('Shares',s.accepted+'/'+s.submitted)+\n"
+"      card('Block gefunden',s.blocks_found)+\n"
 "      card('Beste Difficulty',s.best.toFixed(6))+\n"
 "      card('Pool',s.pool?'online':'getrennt')+\n"
 "      card('Laufzeit',s.uptime)+\n"

@@ -105,6 +105,11 @@ Im Heimnetz zeigt das Gerät unter seiner IP ein Dashboard mit Live-Werten.
 Seitentaste kurz blättert, vier Sekunden öffnet das Setup, zehn Sekunden
 setzt auf Werkszustand zurück.
 
+Der Mining-Screen und das Dashboard zeigen unter `BLOCK GEFUNDEN` einen
+dauerhaft gespeicherten Lebenszeitzähler. Er wird nur erhöht, wenn ein Hash
+das Bitcoin-Netzwerkziel erreicht und der Pool den zugehörigen Submit
+bestätigt. Angenommene normale Shares zählen nicht als gefundener Block.
+
 ### Grafiken
 
 Die fünf grafischen Informationsseiten sowie Start- und Einrichtungsscreen

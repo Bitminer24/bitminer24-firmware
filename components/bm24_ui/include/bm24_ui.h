@@ -17,6 +17,7 @@ typedef struct {
     double sw_khs;
     float temperature_c;
     uint64_t uptime_seconds;
+    uint64_t found_blocks;
     bm24_miner_stats miner;
     bm24_pool_stats pool;
     bm24_network_status network;

@@ -90,6 +90,7 @@ static struct {
    verlieren, selten genug, um den Flash nicht zu verschleissen. */
 static bm24_runtime_stats s_persisted;
 static uint64_t s_accepted_base;   /* Shares aus frueheren Sitzungen */
+static uint64_t s_found_blocks_base;
 
 static void dashboard_status(char *json, size_t capacity)
 {
@@ -113,10 +114,12 @@ static void dashboard_status(char *json, size_t capacity)
     const esp_app_desc_t *app = esp_app_get_description();
     snprintf(json, capacity,
              "{\"khs\":%.1f,\"temp\":%.1f,\"accepted\":%" PRIu64
-             ",\"submitted\":%" PRIu64 ",\"best\":%.8f,\"pool\":%s"
+             ",\"submitted\":%" PRIu64 ",\"blocks_found\":%" PRIu64
+             ",\"best\":%.8f,\"pool\":%s"
              ",\"uptime\":\"%s\",\"workers\":%u,\"version\":\"%s\"}",
              s_live.khs, s_live.temperature, pool.accepted, pool.submitted,
-             best, pool.connected ? "true" : "false", uptime,
+             s_persisted.found_blocks, best,
+             pool.connected ? "true" : "false", uptime,
              (unsigned)(metrics.pool_stats_valid ? metrics.pool_workers : 1),
              app->version);
 }
@@ -129,6 +132,7 @@ static void supervisor_task(void *arg)
     uint32_t last_generation = 0;
     uint64_t last_hw = 0, last_sw = 0;
     uint32_t stalled_seconds = 0;
+    uint32_t save_countdown = 300;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -211,10 +215,19 @@ static void supervisor_task(void *arg)
         /* Die Pool-Zaehler starten bei jedem Boot bei null; addiert wird
            deshalb der Stand dieser Sitzung auf den gemerkten Sockel. */
         s_persisted.accepted = s_accepted_base + pool.accepted;
+        uint64_t found_blocks =
+            s_found_blocks_base + pool.found_blocks;
+        bool new_block = found_blocks > s_persisted.found_blocks;
+        s_persisted.found_blocks = found_blocks;
         if (pool.best_difficulty > s_persisted.best_difficulty)
             s_persisted.best_difficulty = pool.best_difficulty;
-        static uint32_t save_countdown = 300;
-        if (--save_countdown == 0) {
+        if (new_block) {
+            /* Ein echter Blocktreffer ist extrem selten und darf bei einem
+               Stromausfall nicht bis zum regulaeren Intervall verloren
+               gehen. Darum sofort sichern. */
+            bm24_stats_save(&s_persisted);
+            save_countdown = 300;
+        } else if (--save_countdown == 0) {
             save_countdown = 300;
             bm24_stats_save(&s_persisted);
         }
@@ -228,6 +241,7 @@ static void supervisor_task(void *arg)
             .sw_khs = sw_rate / 1000.0,
             .temperature_c = temperature,
             .uptime_seconds = s_persisted.total_seconds,
+            .found_blocks = s_persisted.found_blocks,
             .miner = miner,
             .pool = pool,
             .network = network
@@ -237,14 +251,15 @@ static void supervisor_task(void *arg)
         ESP_LOGI(TAG,
                  "%.1f kH/s (HW %.1f, SW %.1f), %.1f C, Duty %u%%, "
                  "WLAN %s, Pool %s, Shares %" PRIu64 "/%" PRIu64
-                 ", Fehler %" PRIu64,
+                 ", Bloecke %" PRIu64 ", Fehler %" PRIu64,
                  (hw_rate + sw_rate) / 1000.0, hw_rate / 1000.0,
                  sw_rate / 1000.0, temperature,
                  (unsigned)miner.sw_duty_percent,
                  network.connected ? network.ip :
                      (network.portal_active ? "SETUP" : "offline"),
                  pool.connected ? "online" : pool.last_error,
-                 pool.accepted, pool.submitted, miner.mismatches);
+                 pool.accepted, pool.submitted, s_persisted.found_blocks,
+                 miner.mismatches);
     }
 }
 
@@ -330,6 +345,7 @@ void app_main(void)
     bm24_stats_load(&s_persisted);
     s_persisted.restarts++;
     s_accepted_base = s_persisted.accepted;
+    s_found_blocks_base = s_persisted.found_blocks;
     ESP_LOGI(TAG, "Start %u, Gesamtlaufzeit bisher %" PRIu64 " s",
              (unsigned)s_persisted.restarts, s_persisted.total_seconds);
 

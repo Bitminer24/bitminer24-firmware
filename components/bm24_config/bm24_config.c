@@ -217,6 +217,15 @@ const char *bm24_config_status_string(bm24_config_status status)
    Logik und kennen kein NVS. */
 #ifdef ESP_PLATFORM
 
+/* Format vor Einfuehrung des dauerhaften Blockzaehlers. Alte Geraete
+   duerfen beim Update weder Laufzeit noch Shares oder Bestmarke verlieren. */
+typedef struct {
+    uint64_t total_seconds;
+    uint64_t accepted;
+    double best_difficulty;
+    uint32_t restarts;
+} bm24_runtime_stats_v1;
+
 void bm24_stats_load(bm24_runtime_stats *stats)
 {
     if (!stats)
@@ -225,10 +234,25 @@ void bm24_stats_load(bm24_runtime_stats *stats)
     nvs_handle_t handle;
     if (nvs_open(BM24_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK)
         return;
-    size_t size = sizeof(*stats);
-    if (nvs_get_blob(handle, BM24_NVS_STATS_KEY, stats, &size) != ESP_OK ||
-        size != sizeof(*stats))
-        memset(stats, 0, sizeof(*stats));
+
+    size_t size = 0;
+    esp_err_t err =
+        nvs_get_blob(handle, BM24_NVS_STATS_KEY, NULL, &size);
+    if (err == ESP_OK && size == sizeof(*stats)) {
+        size = sizeof(*stats);
+        if (nvs_get_blob(handle, BM24_NVS_STATS_KEY, stats, &size) != ESP_OK)
+            memset(stats, 0, sizeof(*stats));
+    } else if (err == ESP_OK && size == sizeof(bm24_runtime_stats_v1)) {
+        bm24_runtime_stats_v1 old = {0};
+        size = sizeof(old);
+        if (nvs_get_blob(handle, BM24_NVS_STATS_KEY, &old, &size) == ESP_OK) {
+            stats->total_seconds = old.total_seconds;
+            stats->accepted = old.accepted;
+            stats->best_difficulty = old.best_difficulty;
+            stats->restarts = old.restarts;
+            stats->found_blocks = 0;
+        }
+    }
     nvs_close(handle);
 }
 
