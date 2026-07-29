@@ -15,6 +15,12 @@ Komplett neu gebaut auf nativem ESP-IDF 5.5, ohne Arduino-Unterbau.
 
 ---
 
+> **Vorgängerin:** Auf verkauften Geräten läuft derzeit noch die
+> Arduino-basierte 1.8.3-bm1 (292-298 kH/s). Sie bleibt der Rückfallstand,
+> bis diese Firmware ihren mehrstündigen Dauerlauf hinter sich hat, und
+> liegt in einem eigenen, nicht öffentlichen Repo. Der Web-Flasher auf
+> bitminer24.de liefert bis dahin weiterhin die 1.x aus.
+
 ## Was das hier ist
 
 Ein NerdMiner V2 rechnet allein gegen das gesamte Bitcoin-Netzwerk. Die
