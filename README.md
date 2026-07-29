@@ -166,8 +166,14 @@ Diese Firmware steht auf den Schultern anderer.
   **[CoinGecko](https://www.coingecko.com)** für die frei zugänglichen
   Netzwerk- und Kursdaten.
 
-Vollständige Herkunftsangaben in [`NOTICE.md`](NOTICE.md), der
-Lizenztext des Ursprungsprojekts in [`LICENSE-upstream`](LICENSE-upstream).
+## Lizenz
+
+MIT, wie das Projekt, auf dem diese Firmware aufbaut. Nimm sie, verändere
+sie, verkaufe sie. Behalte nur die Urheberangaben bei.
+
+Vollständige Herkunftsangaben in [`NOTICE.md`](NOTICE.md), der Lizenztext
+des Ursprungsprojekts in [`LICENSE-upstream`](LICENSE-upstream). Marken und
+Bildschirmgestaltung sind davon nicht erfasst.
 
 ---
 
