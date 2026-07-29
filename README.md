@@ -1,137 +1,183 @@
+<div align="center">
+
 # BitMiner24 Firmware 2.0
 
-Natives ESP-IDF 5.5 (via PlatformIO, `framework = espidf`), modular
-geschnitten, host-getestet. Plan und Begründung:
-`Desktop/CryptoTuts Website/nerdminer-firmware/docs/FIRMWARE-2.0-PLAN.md`.
+**Solo-Mining-Firmware für den NerdMiner V2 auf LilyGO T-Display S3.**
+Komplett neu gebaut auf nativem ESP-IDF 5.5, ohne Arduino-Unterbau.
 
-Dieses Repo liegt bewusst AUSSERHALB des CryptoTuts-Workspace: der
-IDF-Build verweigert Projektpfade mit Leerzeichen, und der Workspace-Ordner
-heißt "CryptoTuts Website".
+**~300 kH/s · 52 °C · 38 Host-Tests · OTA mit Rollback**
 
-Die vermessene Referenz bleibt die 1.8.3-bm1 im Arduino-Baum
-(`CryptoTuts Website/nerdminer-firmware/`): 292-298 kH/s bei 52-55 °C auf
-dem LilyGO T-Display S3. Der native IDF-5.5-SHA-Pruefstand erreicht nach
-Korrektur des H-Registerlayouts reproduzierbar 306,0 kH/s (270,3 HW +
-35,6 SW), 64/64 Boot-Vektoren und Millionen Hashes ohne Abweichung.
+[**Gerät kaufen auf bitminer24.de →**](https://www.bitminer24.de)
 
-Darauf sitzt jetzt der vollstaendige native Produktpfad: versionierte
-NVS-Konfiguration, WPA2-Setup-AP, Wi-Fi STA mit Reconnect, Stratum ueber
-TCP oder geprueftes TLS, Job-/Share-Verarbeitung, natives `esp_lcd`-Display,
-A/B-OTA mit Rollback, Watchdog und Temperaturregelung. Arduino,
-WiFiManager, ArduinoJson und TFT_eSPI sind nicht Teil des v2-Builds.
+<img src="assets/screens-320x170/miner.png" width="420" alt="Mining-Bildschirm">
 
-Der komplette Rechenpfad erreicht im 55-s-Pruefstand durchschnittlich
-300,26 kH/s bei 60,7 °C und null Abweichungen. Der Produkt-RC
-`2.0.0-rc2` bootet auf dem T-Display S3 und wartet aktuell auf seine erste
-lokale Provisionierung. Poolbetrieb, Shares und Temperatur mit echtem
-Wi-Fi/Display werden danach im Soak-Test abgenommen; bis dahin ist RC2
-bewusst noch kein finales Release.
+</div>
 
-## Bauen
+---
 
-```bash
-pio run -e bm24-v2          # Geräte-Firmware (ESP-IDF 5.5, GCC 14.2)
-pio test -e native          # Host-Tests, laufen auch in der CI
+## Was das hier ist
+
+Ein NerdMiner V2 rechnet allein gegen das gesamte Bitcoin-Netzwerk. Die
+Gewinnchance ist winzig, der Reiz ist der Lottoschein: Wer trifft, bekommt
+den kompletten Block. Diese Firmware ist unsere Antwort auf die Frage, wie
+gut so ein Gerät eigentlich laufen kann, wenn man den Unterbau ernst nimmt.
+
+Die Ausgangslage war eine Arduino-Firmware auf einem ESP-IDF von 2020 mit
+einem Compiler aus demselben Jahr. Wir haben sie nicht optimiert, sondern
+auf dem aktuellen ESP-IDF 5.5 neu aufgebaut und dabei jeden Schritt
+gemessen statt geschätzt.
+
+| | vorher | jetzt |
+|---|---|---|
+| Hashrate | ~78 kH/s | **~300 kH/s** |
+| Temperatur | über 60 °C | **52 °C** |
+| Unterbau | Arduino, IDF 4.4, GCC 8.4 | ESP-IDF 5.5, GCC 14.2 |
+| Tests ohne Hardware | keine | **38** |
+| Updates | nur per Kabel | A/B-OTA mit Rollback |
+| Korrektheit | ungeprüft | dreistufig verifiziert |
+
+Auf dem Testgerät bestätigt: 40 Stunden Dauerlauf, erster Share vom Pool
+angenommen, keine Abstürze.
+
+## Die Bildschirme
+
+| | |
+|---|---|
+| <img src="assets/screens-320x170/miner.png" width="330" alt="Miner"><br>**Miner** Hashrate, Temperatur, Anteile, beste Difficulty, Laufzeit | <img src="assets/screens-320x170/clock.png" width="330" alt="Uhr"><br>**Uhr** Ortszeit, aktueller Block, Bitcoin-Preis |
+| <img src="assets/screens-320x170/network.png" width="330" alt="Netz"><br>**Bitcoin-Netz** globale Hashrate, Halving, Gebühren, Schwierigkeit | <img src="assets/screens-320x170/price.png" width="330" alt="Preis"><br>**Preis** großer Kurs, Block, Uhrzeit |
+| <img src="assets/screens-320x170/solo.png" width="330" alt="Solo"><br>**Solo-Tracker** letzter Solo-Fund weltweit, Jackpot, Statistik | <img src="assets/screens-320x170/setup.png" width="330" alt="Setup"><br>**Einrichtung** WLAN-Portal mit QR-Code |
+
+Seitentaste kurz blättert, vier Sekunden öffnet die Einrichtung, zehn
+Sekunden setzt auf Werkszustand zurück. Die zweite Taste schaltet das
+Display, Doppelklick dreht es.
+
+## Wie es aufgebaut ist
+
+Alles ist in Module geschnitten, deren reine Logik auf dem PC testbar ist.
+Kein Arduino, kein WiFiManager, kein ArduinoJson, kein TFT_eSPI.
+
 ```
-
-Flashen ab `0x10000` (App-only) erhaelt die NVS-Konfiguration. Ein kompletter
-Factory-Flash ab `0x0` loescht sie.
-
-## Ersteinrichtung
-
-1. Mit `NerdMinerAP` verbinden, Passwort `MineYourCoins` (oder den QR-Code
-   auf dem Display scannen).
-2. `http://192.168.4.1` oeffnen.
-3. WLAN, echte BTC-Adresse/Worker und Pool eintragen.
-
-`yourBtcAddress` und die bekannte Burn-Adresse werden absichtlich
-abgelehnt. GPIO 14 vier Sekunden halten oeffnet das Portal spaeter erneut.
-
-## Struktur
-
-```
-main/                app_main, Task-Aufbau
 components/
-  bm24_format/       Formatierung (Tausenderpunkte, Altersangaben) — host-getestet
-  bm24_sha/          portable SHA-Referenz — host-getestet
-  bm24_sha_sw/       ausgerollter Software-Mining-Kernel — host-getestet
-  bm24_sha_hw/       ESP32-S3-SHA-Werk, Boot-Selbsttest und Laufzeitpruefung
-  bm24_miner/        HW/SW-Worker, Jobwechsel, Share-Queue, Netzfenster,
-                     thermisch dosierbarer SW-Anteil
-  bm24_work/         Stratum-Job -> Coinbase/Merkle/Header/Target,
-                     Share-Difficulty und Zielvergleich — host-getestet
-  bm24_stratum/      sichere JSON-RPC-Ausgabe, IDF-cJSON-Parser,
-                     mining.notify/set_difficulty/set_extranonce
-  bm24_config/       versionierter NVS-Blob und Fail-closed-Validierung
-  bm24_network/      Wi-Fi, Setup-Portal und A/B-OTA-Transport
-  bm24_pool/         TCP/TLS, SNTP, Reconnect, Jobs und Share-Submit
-  bm24_display/      nativer I80/ST7789-Treiber und PWM-Backlight
-  bm24_metrics/      entzerrte HTTPS-Daten fuer Preis/Netz/Solo-Seiten
-  bm24_ui/           fuenf Seiten und nativer 20-ms-Tastentask
-test/                38 Unity-Host-Tests (pio test -e native)
-partitions.csv       A/B-OTA-Layout, App ab 0x10000
+  bm24_sha/        portable SHA-256-Referenz          getestet gegen NIST + Genesis-Block
+  bm24_sha_hw/     das SHA-Werk des ESP32-S3          Boot-Selbsttest + Laufzeitprüfung
+  bm24_sha_sw/     ausgerollter Software-Kernel       Vollständigkeit über 800k Nonces bewiesen
+  bm24_work/       Coinbase, Merkle, Header, Target   Erwartungswerte unabhängig mit Python erzeugt
+  bm24_stratum/    JSON-RPC zum Pool
+  bm24_miner/      HW- und SW-Worker, Share-Queue
+  bm24_pool/       TCP/TLS, Reconnect, Share-Submit
+  bm24_network/    WLAN, Setup-Portal, Dashboard, OTA
+  bm24_display/    nativer I80/ST7789-Treiber
+  bm24_metrics/    Marktdaten von mempool.space und CoinGecko
+  bm24_ui/         fünf Seiten, Tastenauswertung
+  bm24_media/      die Bildschirmgrafiken
 ```
 
-## Für Mitarbeit: bauen, flashen, Grafiken
+**Nichts verlässt den Miner unverifiziert.** Beim Start prüfen 64 Vektoren
+das SHA-Werk gegen die portable Referenz; weicht es ab, wird es abgeschaltet
+statt falsch zu rechnen. Jeder Treffer wird vor dem Absenden erneut
+nachgerechnet. Ein einziger Fehler schaltet den Hardwarepfad ab.
 
-### Werkzeuge
+## Was wir dabei gelernt haben
 
-- PlatformIO (`pip install platformio`), holt ESP-IDF 5.5 und GCC 14.2 selbst
-- für die Host-Tests ein PC-GCC, unter Windows z. B.
-  `winget install BrechtSanders.WinLibs.POSIX.UCRT`
+Die interessanten Ergebnisse waren fast alle negativ, und sie stehen
+vollständig mit Zahlen in [`MESSUNGEN.md`](MESSUNGEN.md). Verworfen, weil
+gemessen und für nutzlos befunden: ein neuerer Compiler, kalibriertes Warten
+statt Warteschleife, die Optimierungsstufen `-O2` und `-Os`, der schnellere
+QIO-Flashmodus und der DMA-Modus des SHA-Werks. Letzterer war viermal
+langsamer als der direkte Registerzugriff.
 
-### Bauen und aufs Gerät bringen
+Der ESP32-S3 wird beim Mining nicht von der CPU begrenzt, sondern vom Bus
+zum SHA-Werk. Wer dort mehr sucht, sucht am falschen Ort.
+
+Was tatsächlich half:
+
+- **Hardware statt Software rechnen lassen.** Das SHA-Werk liefert 270 kH/s
+  bei niedrigerer Temperatur als 35 kH/s aus der CPU. Rechenlast auf die
+  Kerne zu verlagern ist thermisch der schlechtere Weg.
+- **Die Sperre auf das SHA-Werk regelmäßig loslassen.** TLS benutzt denselben
+  Baustein. Wer ihn über einen ganzen Job hält, lässt jeden
+  Verbindungsaufbau 20 bis 37 Sekunden dauern, bis die Gegenstelle auflegt.
+- **Den Miner während Netzabrufen nicht anhalten.** Kostete 8 Prozent
+  Hashrate, inklusive Sekunden mit völligem Stillstand.
+- **Den Watchdog nur dort einsetzen, wo er hingehört.** Ein Task, der
+  regulär minutenlang am Netz wartet, ist kein hängender Task.
+
+## Neu in 2.0
+
+- **Web-Dashboard im Heimnetz.** Live-Werte im Browser, ohne Kabel, ohne
+  aufs Display zu schauen. Schreibzugriffe sind passwortgeschützt.
+- **Updates über WLAN** mit zwei Partitionen und automatischer Rückkehr zur
+  alten Version, falls ein Update nicht startet.
+- **Zähler, die einen Stromausfall überleben:** Gesamtlaufzeit, angenommene
+  Anteile, beste Difficulty und bestätigte Blockfunde.
+- **Absturzdiagnose.** Ein Panic hinterlässt einen auswertbaren
+  Speicherauszug statt nur eines stillen Neustarts.
+- **Temperaturregelung**, die nur den ineffizienten Softwareanteil drosselt
+  und das sparsame Hardwarewerk unangetastet lässt.
+- **Captive Portal** mit WLAN-Auswahlliste, Werksreset per langem
+  Tastendruck, einstellbare Helligkeit, Farben und Zeitzone.
+- Zeitzone mit korrekter Sommerzeitumstellung für Deutschland, Österreich
+  und die Schweiz.
+
+## Ideen für die Zukunft
+
+Aufgeschrieben, weil das Fundament sie jetzt hergibt:
+
+- **Signierte Updates.** Das Gerät nimmt nur noch Firmware an, die von
+  BitMiner24 unterschrieben wurde.
+- **Verschlüsselter Konfigurationsspeicher.** WLAN-Passwort und Adresse
+  liegen derzeit im Klartext im Flash.
+- **Mehrere Pools mit automatischem Umschalten**, damit ein Pool-Ausfall
+  das Gerät nicht stundenlang stillstehen lässt.
+- **Gerätename im Netz** statt IP-Adresse.
+- **Freiwillige, anonyme Betriebsdaten**, damit sich Ausfälle über viele
+  Geräte erkennen lassen statt aus einzelnen Support-Anfragen.
+- **Konsole über USB** für die Ferndiagnose, ohne eine Sonderfirmware zu
+  bauen.
+
+## Mitmachen
 
 ```bash
-pio test -e native                                  # 38 Host-Tests, ohne Hardware
+pio test -e native                                  # 38 Tests, ohne Hardware
 pio run -e bm24-v2                                  # Firmware bauen
-pio run -e bm24-v2 -t upload --upload-port COM21    # flashen (Port anpassen)
-./tools/measure.sh "meine Variante" 150             # bauen, flashen, 150 s messen
+pio run -e bm24-v2 -t upload --upload-port COM21    # flashen
+./tools/measure.sh "meine Variante" 150             # bauen, flashen, messen
 ```
 
-**Wichtig:** PlatformIO schreibt `sdkconfig.bm24-v2` nur einmal und liest
-`sdkconfig.defaults` danach nie wieder. Wer an den Vorgaben etwas ändert,
-muss die Datei löschen, sonst wirkt die Änderung stillschweigend nicht.
-`tools/measure.sh` macht das automatisch.
+Details zu Werkzeugen, Ersteinrichtung und dem Weg für eigene Grafiken
+stehen in [`MITMACHEN.md`](MITMACHEN.md). Wer eine Optimierung
+ausprobieren möchte, sollte vorher [`MESSUNGEN.md`](MESSUNGEN.md) lesen,
+damit keine Sackgasse ein zweites Mal gebaut wird.
 
-### Erste Einrichtung am Gerät
+## Credits
 
-Ohne gespeicherte Konfiguration öffnet das Gerät das WLAN `NerdMinerAP`.
-Verbinden, die Anmeldeseite öffnet sich von selbst (sonst `http://192.168.4.1`),
-eigenes WLAN aus der Liste wählen und die eigene BTC-Adresse eintragen. Die
-vorbelegte Adresse ist eine öffentliche Testadresse und muss ersetzt werden.
+Diese Firmware steht auf den Schultern anderer.
 
-Im Heimnetz zeigt das Gerät unter seiner IP ein Dashboard mit Live-Werten.
-Seitentaste kurz blättert, vier Sekunden öffnet das Setup, zehn Sekunden
-setzt auf Werkszustand zurück.
+- **[NerdMiner_v2](https://github.com/BitMaker-hub/NerdMiner_v2)** von
+  **BitMaker** und der NerdMiner-Gemeinschaft. Von dort stammen die Idee,
+  der optimierte Software-SHA-Kernel und die ursprünglichen
+  Bildschirmentwürfe. MIT-Lizenz, Copyright (c) 2023 Bitmaker.
+- **[Blockstream Jade](https://github.com/Blockstream/Jade)**, auf dessen
+  shaLib der Software-Kernel wiederum aufbaut.
+- **[@LarryBitcoin](https://github.com/LarryBitcoin)** für die Vorarbeit am
+  SHA-Kernel.
+- **[Espressif](https://github.com/espressif/esp-idf)** für ESP-IDF.
+- **[mempool.space](https://mempool.space)** und
+  **[CoinGecko](https://www.coingecko.com)** für die frei zugänglichen
+  Netzwerk- und Kursdaten.
 
-Der Mining-Screen und das Dashboard zeigen unter `BLOCK GEFUNDEN` einen
-dauerhaft gespeicherten Lebenszeitzähler. Er wird nur erhöht, wenn ein Hash
-das Bitcoin-Netzwerkziel erreicht und der Pool den zugehörigen Submit
-bestätigt. Angenommene normale Shares zählen nicht als gefundener Block.
+Vollständige Herkunftsangaben in [`NOTICE.md`](NOTICE.md), der
+Lizenztext des Ursprungsprojekts in [`LICENSE-upstream`](LICENSE-upstream).
 
-### Grafiken
+---
 
-Die fünf grafischen Informationsseiten sowie Start- und Einrichtungsscreen
-liegen als RGB565-Felder in `components/bm24_media/bm24_media.c`, jeweils
-320×170. Dazu gehört jetzt auch der Solo-Tracker auf Seite 5.
-Die nativ für das Display neu aufgebauten 320×170-Quelldateien liegen unter
-`assets/screens-320x170/`. Sie reduzieren redundante Kleininformationen und
-lassen die Kernwerte größer darstellen. Die Grafiken tragen ihre
-Beschriftungen im Bild; die Live-Werte werden darüber gezeichnet.
+<div align="center">
 
-Eine eigene Grafik einsetzen:
+### Gerät, Zubehör und Anleitungen
 
-1. SVG unter `assets/screens-320x170/source-svg/` in 320×170 anlegen.
-   Beschriftungen gehören ins Bild, die Kästchen für die Werte bleiben leer.
-2. Mit `source-svg/render.ps1` die PNGs erzeugen und danach mit
-   `embed-screens.ps1` als RGB565 in `bm24_media.c` einbetten.
-3. Die Koordinaten der Werte stehen in `components/bm24_ui/bm24_ui.c` bei
-   der jeweiligen Seite als `frame->slot[n] = {x, y, Größe, rechtsbündig}`.
-   `x` ist bei rechtsbündig die **rechte** Kante des Kästchens.
+**[www.bitminer24.de](https://www.bitminer24.de)**
 
-### Zustand
+Fertig aufgebaute Geräte, Netzteile und deutschsprachiger Support.
+Wir liefern aus Deutschland und aktualisieren die Firmware für dich mit.
 
-Läuft auf dem Testgerät mit rund 300 kH/s bei 54 °C. Was gemessen wurde und
-was sich als Sackgasse erwiesen hat, steht in `MESSUNGEN.md` — bitte dort
-nachsehen, bevor jemand eine Optimierung erneut probiert.
+</div>

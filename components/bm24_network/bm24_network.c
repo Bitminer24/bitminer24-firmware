@@ -15,6 +15,7 @@
 #include "lwip/sockets.h"
 #include "mbedtls/base64.h"
 #include "bm24_dashboard_html.h"
+#include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_ota_ops.h"
@@ -37,11 +38,6 @@ static bool s_sntp_started;
 /* Das Formular wird in drei Stuecken gesendet, weil dazwischen die
    Ergebnisse des WLAN-Scans eingesetzt werden. Ohne Auswahlliste musste der
    Name von Hand getippt werden — der haeufigste Einrichtungsfehler. */
-/* Oeffentliche Testadresse (Genesis-Coinbase). Sie erlaubt einen sofortigen
-   Funktionstest ohne Tipparbeit, gehoert aber niemandem im Zugriff — das
-   Formular weist deshalb deutlich darauf hin. Die Sperre gegen die
-   Burn-Adresse in bm24_config bleibt davon unberuehrt. */
-#define BM24_DEFAULT_WORKER "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
 
 static const char PORTAL_HEAD[] =
     "<!doctype html><html lang=de><meta charset=utf-8>"
@@ -63,10 +59,10 @@ static const char PORTAL_TAIL[] =
     "<label>WLAN-Passwort<input name=wifi_password type=password maxlength=64>"
     "<small>Leer lassen nur bei offenem WLAN.</small></label>"
     "<label>BTC-Adresse / Worker<input name=worker maxlength=128 required "
-    "value=\"" BM24_DEFAULT_WORKER "\"></label>"
-    "<p class=warn><small>Voreingetragen ist eine oeffentliche Testadresse. "
-    "Vor dem Dauerbetrieb unbedingt durch die eigene Adresse ersetzen, sonst "
-    "gehen Funde nicht an dich.</small></p>"
+    "placeholder=\"bc1... oder Adresse.worker\"></label>"
+    "<p class=warn><small>Trage deine EIGENE Bitcoin-Adresse ein. Ein Fund "
+    "geht immer an die hier hinterlegte Adresse und laesst sich danach nicht "
+    "mehr umleiten.</small></p>"
     "<label>Pool-Host<input name=pool_host maxlength=128 "
     "value=\"public-pool.io\" required></label>"
     "<label>Pool-Port<input name=pool_port type=number min=1 max=65535 "
@@ -279,6 +275,26 @@ static esp_err_t send_scan_options(httpd_req_t *req)
    jedes Geraet im Netz erreichbar, und ohne Pruefung koennte jeder die
    Wallet-Adresse aendern oder fremde Firmware aufspielen. Deshalb
    verlangen /save und /ota dort HTTP-Basic-Auth mit dem Geraetepasswort. */
+/* Passwort fuer schreibende Zugriffe im Heimnetz, aus der MAC abgeleitet.
+
+   Bewusst NICHT das Setup-WLAN-Passwort: das ist der oeffentlich
+   dokumentierte Standardwert des Ursprungsprojekts und steht damit im Netz.
+   Fuer das Onboarding ist das richtig und bleibt so; als Schutz davor, dass
+   jemand im WLAN eines Kunden fremde Firmware aufspielt, taugt es nicht.
+   Der abgeleitete Wert ist je Geraet verschieden und steht im seriellen
+   Protokoll sowie auf der Einrichtungsseite. */
+static const char *device_web_password(void)
+{
+    static char password[16];
+    if (!password[0]) {
+        uint8_t mac[6];
+        esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+        snprintf(password, sizeof(password), "bm24-%02x%02x%02x",
+                 mac[3], mac[4], mac[5]);
+    }
+    return password;
+}
+
 static bool write_access_allowed(httpd_req_t *req)
 {
     bool portal;
@@ -316,7 +332,8 @@ static esp_err_t deny_write(httpd_req_t *req)
     httpd_resp_set_hdr(req, "WWW-Authenticate",
                        "Basic realm=\"BitMiner24\"");
     httpd_resp_sendstr(req,
-        "Anmeldung noetig. Passwort ist das des Setup-WLANs.");
+        "Anmeldung noetig. Das Geraetepasswort steht auf der "
+        "Einrichtungsseite und im seriellen Protokoll.");
     return ESP_OK;
 }
 
@@ -691,6 +708,8 @@ static bool start_setup_ap(void)
     bool ok = start_http_portal();
     ESP_LOGW(TAG, "Setup: WLAN %s, Passwort %s, http://192.168.4.1",
              ssid, BM24_SETUP_PASSWORD);
+    ESP_LOGW(TAG, "Geraetepasswort fuer Aenderungen im Heimnetz: %s",
+             device_web_password());
     return ok;
 }
 
