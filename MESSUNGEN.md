@@ -124,7 +124,7 @@ Der feste Pruefstand wurde durch den nativen Produktpfad ersetzt und als
 erweitert. Der Boot mit IDF 5.5.0 besteht NVS, nativen
 I80/ST7789-Displaystart, Temperatursensor und SHA-Hardware-Selbsttest 64/64.
 Ohne gespeicherte Konfiguration startet der WPA2-Setup-AP
-`BitMiner24-62499D` mit HTTP-Portal.
+`BitMiner24-XXXXXX` mit HTTP-Portal.
 
 Diese Beobachtung ist noch **keine neue Leistungszahl**. Eine belastbare
 Produktmessung beginnt erst nach lokaler Eingabe von WLAN und echter
