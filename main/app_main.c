@@ -337,7 +337,7 @@ void app_main(void)
     if (pending_verify) {
         if (esp_ota_mark_app_valid_cancel_rollback() != ESP_OK)
             fatal_boot("OTA VALIDIERUNG", true);
-        ESP_LOGI(TAG, "OTA-Image nach Selbsttests als gueltig markiert");
+        ESP_LOGI(TAG, "OTA-Image nach Selbsttests als gültig markiert");
     }
 
     /* Pool-seitige Statistik braucht Host und Adresse; sie zeigt auch

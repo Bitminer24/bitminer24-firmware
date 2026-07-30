@@ -284,7 +284,7 @@ static bool process_response(pool_session *session,
         }
         portEXIT_CRITICAL(&s_stats_lock);
         if (network_block && message->response_ok)
-            ESP_LOGW(TAG, "BLOCK GEFUNDEN UND VOM POOL BESTAETIGT, id=%"
+            ESP_LOGW(TAG, "BLOCK GEFUNDEN UND VOM POOL BESTÄTIGT, id=%"
                      PRIu32, message->id);
         else
             ESP_LOGI(TAG, "Share id=%" PRIu32 " %s", message->id,
@@ -300,7 +300,7 @@ static bool process_line(pool_session *session, const char *line)
         portENTER_CRITICAL(&s_stats_lock);
         ++s_stats.protocol_errors;
         portEXIT_CRITICAL(&s_stats_lock);
-        stats_error("Ungueltige Stratum-Nachricht");
+        stats_error("Ungültige Stratum-Nachricht");
         return true; /* Eine kaputte Zeile beendet nicht sofort die Session. */
     }
 
@@ -342,7 +342,7 @@ static esp_tls_t *connect_pool(void)
 {
     if (s_config.pool_tls) {
         if (!bm24_network_sync_time(15000)) {
-            stats_error("Keine sichere Zeit fuer TLS");
+            stats_error("Keine sichere Zeit für TLS");
             return NULL;
         }
     }

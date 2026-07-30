@@ -5,8 +5,17 @@ managed_components/
 dependencies.lock
 build.log
 upload.log
+HANDOVER.md
+*.bak
+*.tmp
+.env
+.env.*
+!.env.example
+*.key
+Thumbs.db
+.DS_Store
 
-# Von PlatformIO erzeugt und genau einmal geschrieben. Versioniert wuerde
+# Von PlatformIO erzeugt und genau einmal geschrieben. Versioniert würde
 # jeder Mitarbeiter den veralteten Stand erben, statt sdkconfig.defaults
 # auszuwerten — genau daran ist hier schon eine Einstellung stillschweigend
 # gescheitert.

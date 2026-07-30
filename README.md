@@ -2,10 +2,10 @@
 
 # BitMiner24 Firmware 2.0
 
-**Solo-Mining-Firmware für den NerdMiner V2 auf LilyGO T-Display S3.**
+**Solo-Mining-Firmware für den Nerdminer V2 auf LilyGO T-Display S3.**
 Komplett neu gebaut auf nativem ESP-IDF 5.5, ohne Arduino-Unterbau.
 
-**~300 kH/s · 52 °C · 38 Host-Tests · OTA mit Rollback**
+**~300 kH/s · 52 °C · 38 Host-Tests · Browser-Flasher**
 
 [**Gerät kaufen auf bitminer24.de →**](https://www.bitminer24.de)
 
@@ -15,15 +15,13 @@ Komplett neu gebaut auf nativem ESP-IDF 5.5, ohne Arduino-Unterbau.
 
 ---
 
-> **Vorgängerin:** Auf verkauften Geräten läuft derzeit noch die
-> Arduino-basierte 1.8.3-bm1 (292-298 kH/s). Sie bleibt der Rückfallstand,
-> bis diese Firmware ihren mehrstündigen Dauerlauf hinter sich hat, und
-> liegt in einem eigenen, nicht öffentlichen Repo. Der Web-Flasher auf
-> bitminer24.de liefert bis dahin weiterhin die 1.x aus.
+> **Aktueller Release:** Der BitMiner24-Web-Updater installiert standardmäßig
+> Version 2.0.0. Die unveränderte Originalversion 1.8.3 bleibt dort als
+> wählbarer Rückfallstand verfügbar.
 
 ## Was das hier ist
 
-Ein NerdMiner V2 rechnet allein gegen das gesamte Bitcoin-Netzwerk. Die
+Ein Nerdminer V2 rechnet allein gegen das gesamte Bitcoin-Netzwerk. Die
 Gewinnchance ist winzig, der Reiz ist der Lottoschein: Wer trifft, bekommt
 den kompletten Block. Diese Firmware ist unsere Antwort auf die Frage, wie
 gut so ein Gerät eigentlich laufen kann, wenn man den Unterbau ernst nimmt.
@@ -39,7 +37,7 @@ gemessen statt geschätzt.
 | Temperatur | über 60 °C | **52 °C** |
 | Unterbau | Arduino, IDF 4.4, GCC 8.4 | ESP-IDF 5.5, GCC 14.2 |
 | Tests ohne Hardware | keine | **38** |
-| Updates | nur per Kabel | A/B-OTA mit Rollback |
+| Updates | nur manuell | BitMiner24-Web-Updater im Browser |
 | Korrektheit | ungeprüft | dreistufig verifiziert |
 
 Auf dem Testgerät bestätigt: 40 Stunden Dauerlauf, erster Share vom Pool
@@ -71,7 +69,7 @@ components/
   bm24_stratum/    JSON-RPC zum Pool
   bm24_miner/      HW- und SW-Worker, Share-Queue
   bm24_pool/       TCP/TLS, Reconnect, Share-Submit
-  bm24_network/    WLAN, Setup-Portal, Dashboard, OTA
+  bm24_network/    WLAN, Setup-Portal, Dashboard, Web-Updater-Link
   bm24_display/    nativer I80/ST7789-Treiber
   bm24_metrics/    Marktdaten von mempool.space und CoinGecko
   bm24_ui/         fünf Seiten, Tastenauswertung
@@ -112,8 +110,10 @@ Was tatsächlich half:
 
 - **Web-Dashboard im Heimnetz.** Live-Werte im Browser, ohne Kabel, ohne
   aufs Display zu schauen. Schreibzugriffe sind passwortgeschützt.
-- **Updates über WLAN** mit zwei Partitionen und automatischer Rückkehr zur
-  alten Version, falls ein Update nicht startet.
+- **Firmware-Updates über den BitMiner24-Web-Updater.** In der lokalen
+  Oberfläche gibt es keinen Datei-Upload und keinen `/ota`-Endpunkt.
+- **A/B-App-Layout mit Boot-Rollback**, damit ein nicht startendes
+  App-Image automatisch zurückgenommen werden kann.
 - **Zähler, die einen Stromausfall überleben:** Gesamtlaufzeit, angenommene
   Anteile, beste Difficulty und bestätigte Blockfunde.
 - **Absturzdiagnose.** Ein Panic hinterlässt einen auswertbaren
@@ -146,8 +146,8 @@ Aufgeschrieben, weil das Fundament sie jetzt hergibt:
 ```bash
 pio test -e native                                  # 38 Tests, ohne Hardware
 pio run -e bm24-v2                                  # Firmware bauen
-pio run -e bm24-v2 -t upload --upload-port COM21    # flashen
-./tools/measure.sh "meine Variante" 150             # bauen, flashen, messen
+pio run -e bm24-v2 -t upload --upload-port <PORT>   # Port z. B. COM4
+BM24_PORT=<PORT> ./tools/measure.sh "Variante" 150  # bauen, flashen, messen
 ```
 
 Details zu Werkzeugen, Ersteinrichtung und dem Weg für eigene Grafiken
@@ -159,8 +159,8 @@ damit keine Sackgasse ein zweites Mal gebaut wird.
 
 Diese Firmware steht auf den Schultern anderer.
 
-- **[NerdMiner_v2](https://github.com/BitMaker-hub/NerdMiner_v2)** von
-  **BitMaker** und der NerdMiner-Gemeinschaft. Von dort stammen die Idee,
+- **[Nerdminer_v2](https://github.com/BitMaker-hub/NerdMiner_v2)** von
+  **BitMaker** und der Nerdminer-Gemeinschaft. Von dort stammen die Idee,
   der optimierte Software-SHA-Kernel und die ursprünglichen
   Bildschirmentwürfe. MIT-Lizenz, Copyright (c) 2023 Bitmaker.
 - **[Blockstream Jade](https://github.com/Blockstream/Jade)**, auf dessen

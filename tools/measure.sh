@@ -5,30 +5,29 @@
 # danach nicht mehr. Ohne das Loeschen wirkt keine Aenderung an den Vorgaben —
 # genau daran ist die Optimierungsstufe vorher stillschweigend gescheitert.
 #
-#   ./tools/measure.sh "Bezeichnung" [Sekunden]
-#
-# Der serielle Anschluss kommt aus BM24_PORT, Vorgabe COM21.
+#   BM24_PORT=COM4 ./tools/measure.sh "Bezeichnung" [Sekunden]
 set -u
 LABEL="${1:-unbenannt}"
 SECONDS_TO_RUN="${2:-150}"
-PORT="${BM24_PORT:-COM21}"
+PORT="${BM24_PORT:?BM24_PORT muss gesetzt sein, z. B. COM4 oder /dev/ttyACM0}"
+PIO="${PLATFORMIO:-platformio}"
 
 cd "$(dirname "$0")/.."
 export PYTHONIOENCODING=utf-8
 
 rm -f sdkconfig.bm24-v2
-python -m platformio run -e bm24-v2 -t upload --upload-port "$PORT" > /tmp/bm24build.log 2>&1
+"$PIO" run -e bm24-v2 -t upload --upload-port "$PORT" > /tmp/bm24build.log 2>&1
 if ! grep -q SUCCESS /tmp/bm24build.log; then
   echo "$LABEL: BUILD/FLASH FEHLGESCHLAGEN"
   grep -iE "error" /tmp/bm24build.log | head -3
   exit 1
 fi
 
-BM24_PORT="$PORT" python - "$LABEL" "$SECONDS_TO_RUN" <<'PY'
-import os, serial, time, sys, re, statistics
+python - "$LABEL" "$SECONDS_TO_RUN" "$PORT" <<'PY'
+import serial, time, sys, re, statistics
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-label, secs = sys.argv[1], int(sys.argv[2])
-s = serial.Serial(os.environ.get("BM24_PORT", "COM21"), 115200, timeout=0.5)
+label, secs, port = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+s = serial.Serial(port, 115200, timeout=0.5)
 # Anlauf verwerfen: Hochlauf und erste Pool-Verbindung verzerren das Mittel
 time.sleep(20)
 end = time.time() + secs

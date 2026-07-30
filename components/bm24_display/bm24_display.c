@@ -461,7 +461,7 @@ bool bm24_display_start(void)
                                 &s_task, 1) != pdPASS)
         return false;
     xTaskNotifyGive(s_task);
-    ESP_LOGI(TAG, "T-Display S3 ueber nativen I80-Treiber bereit");
+    ESP_LOGI(TAG, "T-Display S3 über nativen I80-Treiber bereit");
     return true;
 }
 

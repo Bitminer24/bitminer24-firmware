@@ -14,7 +14,7 @@
 
   <rect x="8" y="70" width="178" height="31" rx="4" fill="#0c0f11" stroke="#7a4105"/>
   <text x="14" y="81" font-family="Arial" font-size="8.5" font-weight="700" fill="#aeb3b8">WLAN</text>
-  <text x="14" y="96" font-family="Arial" font-size="14" font-weight="700" fill="#f4f5f6">NerdMinerAP</text>
+  <text x="14" y="96" font-family="Arial" font-size="14" font-weight="700" fill="#f4f5f6">NerdminerAP</text>
 
   <rect x="8" y="105" width="178" height="31" rx="4" fill="#0c0f11" stroke="#7a4105"/>
   <text x="14" y="116" font-family="Arial" font-size="8.5" font-weight="700" fill="#aeb3b8">PASSWORT</text>

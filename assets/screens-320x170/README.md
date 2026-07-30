@@ -1,4 +1,4 @@
-# NerdMiner² Screens — 320×170
+# Nerdminer² Screens — 320×170
 
 Diese sieben Grafiken sind nativ für das 320×170-Pixel-Display aufgebaut.
 Sie sind keine verkleinerten 1600×800-Fotos: Texte, Linien und Felder werden
@@ -21,12 +21,12 @@ Der QR-Code ist absichtlich eine eigene, scharf gerenderte Rastermatrix mit
 drei Pixeln pro Modul. Er enthält unverändert:
 
 ```text
-WIFI:S:NerdMinerAP;T:WPA;P:MineYourCoins;;
+WIFI:S:NerdminerAP;T:WPA;P:MineYourCoins;;
 ```
 
-Die Firmware verwendet dazu passend `NerdMinerAP`, WPA2-PSK und das Passwort
-`MineYourCoins`. Der finale PNG-Export und ein RGB565-Rückexport wurden mit
-ZXing erfolgreich dekodiert.
+Die Firmware verwendet dazu passend `NerdminerAP`, WPA2-PSK und das Passwort
+`MineYourCoins`. Der finale PNG-Export und das eingebettete
+RGB565-Array wurden mit jsQR erfolgreich dekodiert.
 
 ## Quellen und Einbetten
 

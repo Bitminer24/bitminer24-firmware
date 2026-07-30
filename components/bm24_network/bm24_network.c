@@ -18,7 +18,6 @@
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
-#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 
@@ -38,60 +37,148 @@ static bool s_sntp_started;
 /* Das Formular wird in drei Stuecken gesendet, weil dazwischen die
    Ergebnisse des WLAN-Scans eingesetzt werden. Ohne Auswahlliste musste der
    Name von Hand getippt werden — der haeufigste Einrichtungsfehler. */
+/* Oeffentliche Testadresse (Genesis-Coinbase). Sie erlaubt einen sofortigen
+   Funktionstest ohne Tipparbeit, gehoert aber niemandem im Zugriff — das
+   Formular weist deshalb deutlich darauf hin. Die Sperre gegen die
+   Burn-Adresse in bm24_config bleibt davon unberuehrt. */
+#define BM24_DEFAULT_WORKER "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
 
 static const char PORTAL_HEAD[] =
-    "<!doctype html><html lang=de><meta charset=utf-8>"
+    "<!doctype html><html lang=de><head><meta charset=utf-8>"
     "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
-    "<title>BitMiner24 Setup</title><style>"
-    "body{font:16px system-ui;background:#071018;color:#eef;max-width:34rem;"
-    "margin:2rem auto;padding:0 1rem}form{display:grid;gap:.8rem}"
-    "label{display:grid;gap:.25rem}input,select{font:inherit;padding:.7rem;"
-    "border:1px solid #456;border-radius:.4rem}button{font:inherit;padding:.8rem;"
-    "background:#f7931a;color:#111;border:0;border-radius:.4rem;font-weight:700}"
-    "small{color:#abc}.warn{background:#3a2a10;border:1px solid #f7931a;"
-    "padding:.6rem;border-radius:.4rem}</style><h1>BitMiner24 2.0</h1>"
-    "<p>Bitte WLAN und deine Mining-Adresse eintragen.</p>"
-    "<form method=post action=/save>"
-    "<label>WLAN-Name<select name=ssid required>";
+    "<meta name=theme-color content=\"#050607\">"
+    "<title>BitMiner24 | Einrichtung</title><style>" BM24_WEB_STYLE
+    ".setup-hero{display:grid;grid-template-columns:1fr auto;gap:22px;"
+    "align-items:end;margin:27px 0 14px;padding:28px 30px}.setup-hero>*{min-width:0}"
+    ".setup-hero h1{margin:0;overflow-wrap:anywhere;"
+    "font-size:clamp(27px,5vw,44px);line-height:1.03;letter-spacing:-.035em}"
+    ".setup-hero h1 span{color:var(--orange)}.setup-hero p:not(.eyebrow){"
+    "max-width:620px;margin:12px 0 0;color:var(--muted)}.steps{display:grid;"
+    "grid-template-columns:repeat(3,1fr);gap:6px;min-width:260px}.steps span{"
+    "padding:8px;border:1px solid var(--line);border-radius:6px;color:var(--muted);"
+    "font-size:9px;font-weight:850;text-align:center;text-transform:uppercase;"
+    "letter-spacing:.08em}.steps span:first-child{border-color:var(--line-hot);"
+    "color:var(--orange);background:rgba(255,138,0,.07)}.setup-form{display:grid;"
+    "gap:12px}.form-section{padding:24px}.section-title{display:flex;align-items:center;"
+    "gap:13px;margin-bottom:20px}.section-title h2{margin:0;font-size:20px}"
+    ".section-title p{margin:2px 0 0;color:var(--muted);font-size:12px}.step-no{"
+    "display:grid;place-items:center;width:39px;height:39px;border:1px solid var(--line-hot);"
+    "border-radius:8px;color:var(--orange);font:900 12px/1 ui-monospace,monospace;"
+    "background:rgba(255,138,0,.06)}.fields{display:grid;grid-template-columns:"
+    "repeat(2,minmax(0,1fr));gap:15px}.field{display:grid;align-content:start;gap:6px}"
+    ".field.full{grid-column:1/-1}.label{color:#dce1e4;font-size:12px;font-weight:750}"
+    "input:not([type=checkbox]):not([type=range]),select{width:100%;min-height:46px;"
+    "padding:0 13px;border:1px solid var(--line);border-radius:7px;outline:none;"
+    "background:#07090b;color:var(--text);font:14px ui-sans-serif,system-ui}"
+    "input:focus,select:focus{border-color:var(--orange);box-shadow:0 0 0 3px "
+    "rgba(255,138,0,.09)}input[type=range]{width:100%;accent-color:var(--orange)}"
+    ".check{display:flex;align-items:center;gap:9px;min-height:46px;padding:0 12px;"
+    "border:1px solid var(--line);border-radius:7px;background:#07090b}"
+    ".check input{width:17px;height:17px;accent-color:var(--orange)}"
+    ".hint{color:var(--muted);font-size:10px}.warn{margin:15px 0 0;padding:12px 14px;"
+    "border-left:3px solid var(--orange);border-radius:4px;background:rgba(255,138,0,.07);"
+    "color:#d5d9dc;font-size:11px}.submit-row{display:flex;align-items:center;"
+    "justify-content:space-between;gap:14px;margin-top:3px;padding:20px 24px}"
+    ".submit-row p{margin:0;color:var(--muted);font-size:11px}.submit-row .button{"
+    "min-width:230px}.tools{display:grid;grid-template-columns:1fr auto;gap:18px;"
+    "align-items:center;padding:24px}.tools h2{margin:0 0 5px;font-size:20px}"
+    ".tools p{margin:0;color:var(--muted);font-size:12px}"
+    ".setup-commerce{margin-top:28px}.setup-commerce .offer{min-height:165px}"
+    "@media(max-width:760px){.setup-hero{grid-template-columns:minmax(0,1fr);padding:23px}"
+    ".steps{min-width:0}.fields{grid-template-columns:1fr}.field.full{grid-column:auto}"
+    ".tools{grid-template-columns:1fr}.submit-row{align-items:stretch;flex-direction:column}"
+    ".submit-row .button{width:100%}}"
+    "</style></head><body><header class=\"topbar wrap\">" BM24_WEB_BRAND
+    "<div class=top-actions><span class=chip>ERSTEINRICHTUNG</span>"
+    "<span class=\"state ok\">NERDMINER AP</span></div></header><main class=wrap>"
+    "<section class=\"panel setup-hero\"><div><p class=eyebrow>BitMiner24 Setup</p>"
+    "<h1>IN DREI SCHRITTEN <span>STARTKLAR.</span></h1>"
+    "<p>Verbinde deinen Nerdminer V2 mit dem Heimnetz und hinterlege die "
+    "Bitcoin-Adresse für einen möglichen Solo-Blockfund.</p></div>"
+    "<div class=steps><span>01 WLAN</span><span>02 Mining</span>"
+    "<span>03 Anzeige</span></div></section>"
+    "<form class=setup-form method=post action=/save>"
+    "<section class=\"panel form-section\"><div class=section-title>"
+    "<span class=step-no>01</span><div><h2>WLAN verbinden</h2>"
+    "<p>Wähle dein 2,4-GHz-Heimnetz aus.</p></div></div><div class=fields>"
+    "<label class=\"field full\"><span class=label>WLAN-Netzwerk</span>"
+    "<select name=ssid required>";
 
-static const char PORTAL_TAIL[] =
-    "</select></label>"
-    "<label>WLAN-Passwort<input name=wifi_password type=password maxlength=64>"
-    "<small>Leer lassen nur bei offenem WLAN.</small></label>"
-    "<label>BTC-Adresse / Worker<input name=worker maxlength=128 required "
-    "placeholder=\"bc1... oder Adresse.worker\"></label>"
-    "<p class=warn><small>Trage deine EIGENE Bitcoin-Adresse ein. Ein Fund "
-    "geht immer an die hier hinterlegte Adresse und laesst sich danach nicht "
-    "mehr umleiten.</small></p>"
-    "<label>Pool-Host<input name=pool_host maxlength=128 "
-    "value=\"public-pool.io\" required></label>"
-    "<label>Pool-Port<input name=pool_port type=number min=1 max=65535 "
-    "value=3333 required></label>"
-    "<label>Pool-Passwort<input name=pool_password maxlength=128 value=x></label>"
-    "<label><span><input name=pool_tls type=checkbox value=1> TLS verwenden"
-    "</span></label>"
-    "<h2>Anzeige</h2>"
-    "<label>Helligkeit<input name=brightness type=range min=10 max=255 "
-    "value=130></label>"
-    "<label><span><input name=invert type=checkbox value=1> Helles Thema"
-    "</span></label>"
-    "<label>Zeitzone (Stunden zu UTC)"
+static const char PORTAL_TAIL_BEFORE_PASSWORD[] =
+    "</select><span class=hint>Die Liste wurde direkt vom Nerdminer gescannt.</span>"
+    "</label><label class=\"field full\"><span class=label>WLAN-Passwort</span>"
+    "<input name=wifi_password type=password maxlength=64 autocomplete=current-password "
+    "placeholder=\"Passwort des Heimnetzes\"><span class=hint>Nur bei einem offenen "
+    "WLAN leer lassen.</span></label></div></section>"
+    "<section class=\"panel form-section\"><div class=section-title>"
+    "<span class=step-no>02</span><div><h2>Solo Mining</h2>"
+    "<p>Adresse und Pool für deine Shares.</p></div></div><div class=fields>"
+    "<label class=\"field full\"><span class=label>BTC-Adresse / Worker</span>"
+    "<input name=worker maxlength=128 required spellcheck=false value=\""
+    BM24_DEFAULT_WORKER "\"><span class=hint>Hierhin zahlt der Solo-Pool einen "
+    "möglichen Blockfund aus.</span></label>"
+    "<label class=field><span class=label>Pool-Host</span>"
+    "<input name=pool_host maxlength=128 value=\"public-pool.io\" required "
+    "spellcheck=false></label><label class=field><span class=label>Pool-Port</span>"
+    "<input name=pool_port type=number min=1 max=65535 value=3333 required></label>"
+    "<label class=field><span class=label>Pool-Passwort</span>"
+    "<input name=pool_password maxlength=128 value=x></label>"
+    "<label class=field><span class=label>Verbindung</span><span class=check>"
+    "<input name=pool_tls type=checkbox value=1> TLS verwenden</span></label>"
+    "</div><p class=warn><strong>Wichtig:</strong> Voreingetragen ist eine "
+    "öffentliche Testadresse. Vor dem Dauerbetrieb durch deine eigene "
+    "Bitcoin-Adresse ersetzen, sonst geht ein Fund nicht an dich.</p></section>"
+    "<section class=\"panel form-section\"><div class=section-title>"
+    "<span class=step-no>03</span><div><h2>Anzeige</h2>"
+    "<p>Display passend zu deinem Standort einstellen.</p></div></div>"
+    "<div class=fields><label class=field><span class=label>Helligkeit</span>"
+    "<input name=brightness type=range min=10 max=255 value=130></label>"
+    "<label class=field><span class=label>Darstellung</span><span class=check>"
+    "<input name=invert type=checkbox value=1> Helles Thema</span></label>"
+    "<label class=\"field full\"><span class=label>Zeitzone</span>"
     "<select name=timezone>"
-    "<option value=1 selected>Deutschland, Oesterreich, Schweiz (Sommerzeit)"
+    "<option value=1 selected>Deutschland, Österreich, Schweiz (Sommerzeit)"
     "</option>"
     "<option value=0>UTC</option><option value=2>UTC+2</option>"
     "<option value=-5>UTC-5</option><option value=-8>UTC-8</option>"
-    "</select><small>Nur die erste Wahl stellt automatisch um.</small></label>"
-    "<button>Speichern und starten</button></form>"
-    "<p><small>Setup-WLAN ist WPA2-geschuetzt. Die Daten werden versioniert "
-    "im NVS gespeichert.</small></p><hr><h2>Firmware-Update</h2>"
-    "<p>Nur eine BitMiner24 <code>firmware.bin</code> auswaehlen.</p>"
-    "<input id=firmware type=file accept=.bin><button type=button "
-    "onclick=\"let f=document.querySelector('#firmware').files[0];"
-    "if(!f)return alert('Datei waehlen');"
-    "fetch('/ota',{method:'POST',headers:{'Content-Type':"
-    "'application/octet-stream'},body:f}).then(r=>r.text()).then(alert)\">"
-    "Update installieren</button></html>";
+    "</select><span class=hint>Nur die erste Wahl stellt Sommer- und Winterzeit "
+    "automatisch um.</span></label></div></section>"
+    "<section class=\"panel submit-row\"><p>Die Daten werden versioniert und "
+    "lokal im geschützten Gerätespeicher abgelegt.</p>"
+    "<button class=\"button primary\" type=submit>Speichern &amp; Mining starten"
+    "</button></section></form>"
+    "<div class=section-head><div><p class=eyebrow>Wartung</p>"
+    "<h2>Firmware aktualisieren</h2></div></div>"
+    "<section class=\"panel tools\"><div><h2>BitMiner24 Web-Updater</h2>"
+    "<p>Nerdminer per USB-C mit einem Computer verbinden und den Web-Updater "
+    "in Chrome, Edge, Brave oder Opera öffnen.</p></div>"
+    "<a class=\"button primary\" target=_blank rel=noopener href=\""
+    BM24_WEB_UPDATER "\">Web-Updater öffnen</a>"
+    "</section><section class=\"panel tools\"><div><h2>Gerätepasswort</h2>"
+    "<p>Für geschützte Änderungen im Heimnetz: <code>";
+
+static const char PORTAL_TAIL_AFTER_PASSWORD[] =
+    "</code>. Der Benutzername ist beliebig.</p></div></section>"
+    "<section class=setup-commerce><div class=section-head><div>"
+    "<p class=eyebrow>Wenn dein Miner läuft</p><h2>Dein BitMiner24-Setup</h2>"
+    "</div><p>Links benötigen nach der Einrichtung eine Internetverbindung.</p>"
+    "</div><div class=commerce>"
+    "<a class=\"offer featured\" target=_blank rel=noopener href=\""
+    BM24_SHOP_NERDNOS "\"><span class=offer-tag>Nächste Leistungsstufe</span>"
+    "<h3>NerdNOS</h3><p>Kompakter ASIC-Solo-Miner für deutlich mehr Hashes "
+    "pro Sekunde.</p><span class=offer-cta>Mehr erfahren <span>&rarr;</span>"
+    "</span></a><a class=offer target=_blank rel=noopener href=\""
+    BM24_GUIDES "\"><span class=offer-tag>Einfach erklärt</span>"
+    "<h3>Einrichtung &amp; Wissen</h3><p>Guides zu WLAN, Wallet, Pool und "
+    "Solo Mining.</p><span class=offer-cta>Guides öffnen <span>&rarr;</span>"
+    "</span></a><a class=offer target=_blank rel=noopener href=\""
+    BM24_SUPPORT "\"><span class=offer-tag>Aus Stuttgart</span>"
+    "<h3>BitMiner24 Support</h3><p>Direkte Hilfe, wenn bei Einrichtung oder "
+    "Betrieb etwas hakt.</p><span class=offer-cta>Support kontaktieren "
+    "<span>&rarr;</span></span></a></div></section></main>"
+    "<footer class=\"footer wrap\"><span>Setup-WLAN NerdminerAP &middot; "
+    "WPA2-geschützt</span><span>BitMiner24 Firmware 2.0</span></footer>"
+    "</body></html>";
 
 static bool start_http_portal(void);   /* definiert weiter unten */
 static bm24_status_provider s_status_provider;
@@ -273,16 +360,8 @@ static esp_err_t send_scan_options(httpd_req_t *req)
    Im Setup-WLAN genuegt der WPA2-Schluessel: wer dort ist, hat sich bereits
    ausgewiesen. Im Heimnetz ist das anders — dort ist der Webserver fuer
    jedes Geraet im Netz erreichbar, und ohne Pruefung koennte jeder die
-   Wallet-Adresse aendern oder fremde Firmware aufspielen. Deshalb
-   verlangen /save und /ota dort HTTP-Basic-Auth mit dem Geraetepasswort. */
-/* Passwort fuer schreibende Zugriffe im Heimnetz, aus der MAC abgeleitet.
-
-   Bewusst NICHT das Setup-WLAN-Passwort: das ist der oeffentlich
-   dokumentierte Standardwert des Ursprungsprojekts und steht damit im Netz.
-   Fuer das Onboarding ist das richtig und bleibt so; als Schutz davor, dass
-   jemand im WLAN eines Kunden fremde Firmware aufspielt, taugt es nicht.
-   Der abgeleitete Wert ist je Geraet verschieden und steht im seriellen
-   Protokoll sowie auf der Einrichtungsseite. */
+   Wallet-Adresse aendern. Deshalb verlangt /save dort HTTP-Basic-Auth mit
+   einem je Geraet aus der MAC abgeleiteten Passwort. */
 static const char *device_web_password(void)
 {
     static char password[16];
@@ -323,7 +402,7 @@ static bool write_access_allowed(httpd_req_t *req)
     if (!colon)
         return false;
     /* Benutzername ist beliebig, entscheidend ist das Passwort. */
-    return strcmp(colon + 1, BM24_SETUP_PASSWORD) == 0;
+    return strcmp(colon + 1, device_web_password()) == 0;
 }
 
 static esp_err_t deny_write(httpd_req_t *req)
@@ -332,7 +411,7 @@ static esp_err_t deny_write(httpd_req_t *req)
     httpd_resp_set_hdr(req, "WWW-Authenticate",
                        "Basic realm=\"BitMiner24\"");
     httpd_resp_sendstr(req,
-        "Anmeldung noetig. Das Geraetepasswort steht auf der "
+        "Anmeldung nötig. Das Gerätepasswort steht auf der "
         "Einrichtungsseite und im seriellen Protokoll.");
     return ESP_OK;
 }
@@ -376,7 +455,9 @@ static esp_err_t setup_get(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_sendstr_chunk(req, PORTAL_HEAD);
     send_scan_options(req);
-    httpd_resp_sendstr_chunk(req, PORTAL_TAIL);
+    httpd_resp_sendstr_chunk(req, PORTAL_TAIL_BEFORE_PASSWORD);
+    httpd_resp_sendstr_chunk(req, device_web_password());
+    httpd_resp_sendstr_chunk(req, PORTAL_TAIL_AFTER_PASSWORD);
     return httpd_resp_sendstr_chunk(req, NULL);
 }
 
@@ -441,10 +522,20 @@ static void dns_task(void *arg)
 static esp_err_t portal_redirect(httpd_req_t *req, httpd_err_code_t error)
 {
     (void)error;
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
-    httpd_resp_set_hdr(req, "Connection", "close");
-    httpd_resp_send(req, NULL, 0);
+    bool portal;
+    portENTER_CRITICAL(&s_status_lock);
+    portal = s_status.portal_active;
+    portEXIT_CRITICAL(&s_status_lock);
+    if (portal) {
+        httpd_resp_set_status(req, "302 Found");
+        httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+        httpd_resp_set_hdr(req, "Connection", "close");
+        httpd_resp_send(req, NULL, 0);
+    } else {
+        httpd_resp_set_status(req, "404 Not Found");
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        httpd_resp_sendstr(req, "Nicht gefunden");
+    }
     return ESP_OK;
 }
 
@@ -460,7 +551,7 @@ static esp_err_t portal_save(httpd_req_t *req)
     if (!write_access_allowed(req))
         return deny_write(req);
     if (req->content_len <= 0 || req->content_len >= FORM_MAX) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Formular zu gross");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Formular zu groß");
         return ESP_FAIL;
     }
 
@@ -523,7 +614,7 @@ static esp_err_t portal_save(httpd_req_t *req)
     unsigned long port = decoded ? strtoul(port_text, &end, 10) : 0;
     if (!decoded || !end || *end || port == 0 || port > UINT16_MAX) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "Ungueltige Formulardaten");
+                            "Ungültige Formulardaten");
         return ESP_FAIL;
     }
     config.pool_port = (uint16_t)port;
@@ -531,7 +622,7 @@ static esp_err_t portal_save(httpd_req_t *req)
     bm24_config_status status = bm24_config_save(&config);
     if (status != BM24_CONFIG_OK) {
         char message[96];
-        snprintf(message, sizeof(message), "Konfiguration ungueltig: %s",
+        snprintf(message, sizeof(message), "Konfiguration ungültig: %s",
                  bm24_config_status_string(status));
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, message);
         return ESP_FAIL;
@@ -542,77 +633,6 @@ static esp_err_t portal_save(httpd_req_t *req)
         "<!doctype html><meta charset=utf-8><title>Gespeichert</title>"
         "<h1>Gespeichert</h1><p>BitMiner24 startet jetzt neu.</p>");
     xTaskCreate(restart_task, "bm24Restart", 2048, NULL, 8, NULL);
-    return ESP_OK;
-}
-
-static esp_err_t portal_ota(httpd_req_t *req)
-{
-    if (!write_access_allowed(req))
-        return deny_write(req);
-    const char *content_type = httpd_req_get_hdr_value_len(
-        req, "Content-Type") ? "present" : NULL;
-    char type[48] = {0};
-    if (!content_type ||
-        httpd_req_get_hdr_value_str(req, "Content-Type", type,
-                                    sizeof(type)) != ESP_OK ||
-        strcmp(type, "application/octet-stream") != 0 ||
-        req->content_len < 1024) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "firmware.bin als Binaerdaten erwartet");
-        return ESP_FAIL;
-    }
-
-    const esp_partition_t *partition =
-        esp_ota_get_next_update_partition(NULL);
-    if (!partition || (size_t)req->content_len > partition->size) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "Firmware passt nicht in OTA-Slot");
-        return ESP_FAIL;
-    }
-
-    esp_ota_handle_t ota = 0;
-    esp_err_t err = esp_ota_begin(partition, (size_t)req->content_len, &ota);
-    char buffer[2048];
-    int remaining = req->content_len;
-    while (err == ESP_OK && remaining > 0) {
-        int wanted = remaining < (int)sizeof(buffer)
-            ? remaining : (int)sizeof(buffer);
-        int received = httpd_req_recv(req, buffer, wanted);
-        if (received == HTTPD_SOCK_ERR_TIMEOUT)
-            continue;
-        if (received <= 0) {
-            err = ESP_FAIL;
-            break;
-        }
-        err = esp_ota_write(ota, buffer, (size_t)received);
-        remaining -= received;
-    }
-    if (err == ESP_OK && remaining == 0)
-        err = esp_ota_end(ota);
-    else
-        esp_ota_abort(ota);
-    if (err == ESP_OK) {
-        esp_app_desc_t description;
-        err = esp_ota_get_partition_description(partition, &description);
-        if (err == ESP_OK &&
-            strcmp(description.project_name, "bitminer24_firmware") != 0) {
-            ESP_LOGE(TAG, "OTA-Projekt abgelehnt: %s",
-                     description.project_name);
-            err = ESP_ERR_INVALID_ARG;
-        }
-    }
-    if (err == ESP_OK)
-        err = esp_ota_set_boot_partition(partition);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "OTA fehlgeschlagen: %s", esp_err_to_name(err));
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                            "OTA-Pruefung fehlgeschlagen");
-        return ESP_FAIL;
-    }
-
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    httpd_resp_sendstr(req, "Update geprueft. Neustart in OTA-Slot.");
-    xTaskCreate(restart_task, "bm24OtaRestart", 2048, NULL, 8, NULL);
     return ESP_OK;
 }
 
@@ -647,16 +667,10 @@ static bool start_http_portal(void)
         .method = HTTP_POST,
         .handler = portal_save
     };
-    const httpd_uri_t ota = {
-        .uri = "/ota",
-        .method = HTTP_POST,
-        .handler = portal_ota
-    };
     if (httpd_register_uri_handler(s_httpd, &root) != ESP_OK ||
         httpd_register_uri_handler(s_httpd, &setup_page) != ESP_OK ||
         httpd_register_uri_handler(s_httpd, &status_page) != ESP_OK ||
-        httpd_register_uri_handler(s_httpd, &save) != ESP_OK ||
-        httpd_register_uri_handler(s_httpd, &ota) != ESP_OK) {
+        httpd_register_uri_handler(s_httpd, &save) != ESP_OK) {
         httpd_stop(s_httpd);
         s_httpd = NULL;
         return false;
@@ -668,7 +682,11 @@ static bool start_http_portal(void)
     /* Nur waehrend der Einrichtung umleiten; im Heimnetz soll ein Tippfehler
        ein ehrliches 404 liefern statt endlos aufs Dashboard zu springen. */
     httpd_register_err_handler(s_httpd, HTTPD_404_NOT_FOUND, portal_redirect);
-    if (!s_dns_task)
+    bool portal_active;
+    portENTER_CRITICAL(&s_status_lock);
+    portal_active = s_status.portal_active;
+    portEXIT_CRITICAL(&s_status_lock);
+    if (portal_active && !s_dns_task)
         xTaskCreate(dns_task, "bm24dns", 3072, NULL, 4, &s_dns_task);
     return true;
 }
@@ -708,7 +726,7 @@ static bool start_setup_ap(void)
     bool ok = start_http_portal();
     ESP_LOGW(TAG, "Setup: WLAN %s, Passwort %s, http://192.168.4.1",
              ssid, BM24_SETUP_PASSWORD);
-    ESP_LOGW(TAG, "Geraetepasswort fuer Aenderungen im Heimnetz: %s",
+    ESP_LOGW(TAG, "Gerätepasswort für Änderungen im Heimnetz: %s",
              device_web_password());
     return ok;
 }
@@ -771,6 +789,10 @@ bool bm24_network_start(const bm24_config *config, uint32_t timeout_ms)
     if (esp_wifi_start() != ESP_OK)
         return false;
     s_initialized = true;
+    /* Das Dashboard muss auch im Heimnetz über die Geräte-IP erreichbar
+       sein. Im Einrichtungsmodus läuft derselbe Server bereits. */
+    if (!start_http_portal())
+        return false;
 
     if (!provisioned)
         return false;

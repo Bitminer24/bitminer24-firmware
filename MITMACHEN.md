@@ -11,8 +11,8 @@
 ```bash
 pio test -e native                                  # 38 Host-Tests, ohne Hardware
 pio run -e bm24-v2                                  # Firmware bauen
-pio run -e bm24-v2 -t upload --upload-port COM21    # flashen (Port anpassen)
-./tools/measure.sh "meine Variante" 150             # bauen, flashen, 150 s messen
+pio run -e bm24-v2 -t upload --upload-port <PORT>   # Port z. B. COM4
+BM24_PORT=<PORT> ./tools/measure.sh "Variante" 150  # bauen, flashen, messen
 ```
 
 **Stolperstein:** PlatformIO schreibt `sdkconfig.bm24-v2` genau einmal und
@@ -23,7 +23,7 @@ schon einmal eine Optimierungsstufe unbemerkt gescheitert.
 
 ## Erste Einrichtung am Gerät
 
-Ohne gespeicherte Konfiguration öffnet das Gerät das WLAN `NerdMinerAP`
+Ohne gespeicherte Konfiguration öffnet das Gerät das WLAN `NerdminerAP`
 mit dem Passwort `MineYourCoins`, dem bekannten Standardwert des
 Ursprungsprojekts. Verbinden, die Anmeldeseite öffnet sich von selbst
 (sonst `http://192.168.4.1`), eigenes WLAN aus der Liste wählen und die
@@ -32,11 +32,15 @@ eigene Bitcoin-Adresse eintragen.
 Die Adresse ist bewusst nicht vorbelegt. Ein Fund geht immer an die
 hinterlegte Adresse und lässt sich danach nicht mehr umleiten.
 
-Im Heimnetz zeigt das Gerät unter seiner IP ein Dashboard. Änderungen und
-Firmware-Updates verlangen dort ein Passwort, das je Gerät aus der MAC
-abgeleitet wird und beim Start im seriellen Protokoll steht. Es ist
+Im Heimnetz zeigt das Gerät unter seiner IP ein Dashboard. Änderungen
+verlangen dort ein Passwort, das je Gerät aus der MAC abgeleitet wird und
+auf der Einrichtungsseite sowie beim Start im seriellen Protokoll steht. Es ist
 absichtlich **nicht** das WLAN-Passwort, denn das ist öffentlich bekannt
-und würde jedem im Netz erlauben, fremde Firmware aufzuspielen.
+und würde jedem im Netz erlauben, die Konfiguration zu verändern.
+
+Firmware-Updates werden ausschließlich über den verlinkten
+BitMiner24-Web-Updater installiert. Die lokale Oberfläche besitzt weder
+einen Datei-Upload noch einen `/ota`-Endpunkt.
 
 Bedienung: Seitentaste kurz blättert, vier Sekunden öffnet die
 Einrichtung, zehn Sekunden setzt auf Werkszustand zurück. Zweite Taste

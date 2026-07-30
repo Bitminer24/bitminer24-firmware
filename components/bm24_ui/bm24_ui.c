@@ -359,7 +359,7 @@ static void button_task(void *arg)
             if (!page.long_fired && held >= LONG_MS) {
                 page.long_fired = true;
                 if (bm24_network_open_portal())
-                    ESP_LOGW(TAG, "Setup-Portal per Langdruck geoeffnet");
+                    ESP_LOGW(TAG, "Setup-Portal per Langdruck geöffnet");
             }
             if (page.long_fired && held >= LONG_MS && held < RESET_MS) {
                 /* Ruecklauf sichtbar machen, solange der Knopf gehalten wird */
