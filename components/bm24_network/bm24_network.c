@@ -15,11 +15,13 @@
 #include "lwip/sockets.h"
 #include "mbedtls/base64.h"
 #include "bm24_dashboard_html.h"
+#include "bm24_identity.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
+#include "mdns.h"
 
 #define CONNECTED_BIT BIT0
 #define FORM_MAX      1024
@@ -33,6 +35,7 @@ static bm24_network_status s_status;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool s_initialized;
 static bool s_sntp_started;
+static bool s_mdns_started;
 
 /* Das Formular wird in drei Stuecken gesendet, weil dazwischen die
    Ergebnisse des WLAN-Scans eingesetzt werden. Ohne Auswahlliste musste der
@@ -182,10 +185,19 @@ static const char PORTAL_TAIL_AFTER_PASSWORD[] =
 
 static bool start_http_portal(void);   /* definiert weiter unten */
 static bm24_status_provider s_status_provider;
+static bm24_api_provider s_api_info_provider;
+static bm24_api_provider s_api_status_provider;
 
 void bm24_network_set_status_provider(bm24_status_provider provider)
 {
     s_status_provider = provider;
+}
+
+void bm24_network_set_api_v1_providers(bm24_api_provider info_provider,
+                                       bm24_api_provider status_provider)
+{
+    s_api_info_provider = info_provider;
+    s_api_status_provider = status_provider;
 }
 
 static void status_connected(bool connected)
@@ -197,6 +209,50 @@ static void status_connected(bool connected)
         s_status.rssi = 0;
     }
     portEXIT_CRITICAL(&s_status_lock);
+}
+
+static void start_mdns(void)
+{
+    if (s_mdns_started)
+        return;
+
+    char device_id[BM24_DEVICE_ID_LENGTH + 1];
+    if (!bm24_identity_get(device_id)) {
+        ESP_LOGW(TAG, "mDNS: stabile Geräte-ID nicht verfügbar");
+        return;
+    }
+
+    char hostname[32];
+    snprintf(hostname, sizeof(hostname), "bitminer24-%.6s", device_id + 24);
+
+    esp_err_t error = mdns_init();
+    if (error == ESP_OK)
+        error = mdns_hostname_set(hostname);
+    if (error == ESP_OK)
+        error = mdns_instance_name_set("BitMiner24 NerdMiner");
+
+    mdns_txt_item_t txt[] = {
+        {"id", device_id},
+        {"api", "1.0"},
+        {"type", "nerdminer"},
+        {"model", "NerdMiner V2"},
+        {"setup", "false"},
+    };
+    if (error == ESP_OK) {
+        error = mdns_service_add("BitMiner24 NerdMiner", "_bitminer24",
+                                 "_tcp", 80, txt,
+                                 sizeof(txt) / sizeof(txt[0]));
+    }
+
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "mDNS konnte nicht gestartet werden: %s",
+                 esp_err_to_name(error));
+        mdns_free();
+        return;
+    }
+
+    s_mdns_started = true;
+    ESP_LOGI(TAG, "App-Erkennung: %s.local / _bitminer24._tcp", hostname);
 }
 
 static void wifi_event(void *arg, esp_event_base_t base, int32_t id,
@@ -222,14 +278,11 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id,
         strlcpy(s_status.ip, ip, sizeof(s_status.ip));
         portEXIT_CRITICAL(&s_status_lock);
         xEventGroupSetBits(s_events, CONNECTED_BIT);
-        /* Im Heimnetz erreichbar machen: der Webserver bleibt an und
-           zeigt das Dashboard unter der vergebenen IP, die auch auf dem
-           Display steht.
-           bitminer24.local waere schoener, mDNS liegt seit IDF 5 aber in
-           der Komponenten-Registry, und der PlatformIO-Build loest
-           verwaltete Komponenten hier nicht auf. Nachrusten, sobald der
-           Build ueber idf.py laeuft oder die Komponente mitgeliefert wird. */
-        start_http_portal();
+        /* Im Heimnetz erreichbar machen: HTTP stellt die API bereit, mDNS
+           kündigt sie der App an. Der Hostname enthält nur einen Teil der
+           zufälligen Geräte-ID und bleibt auch bei einem DHCP-Wechsel stabil. */
+        if (start_http_portal())
+            start_mdns();
         ESP_LOGI(TAG, "WLAN verbunden, IP %s", ip);
     }
 }
@@ -427,6 +480,32 @@ static esp_err_t status_get(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_sendstr(req, json);
+}
+
+static esp_err_t api_json_get(httpd_req_t *req, bm24_api_provider provider)
+{
+    char json[1280];
+    json[0] = 0;
+    bool ready = provider && provider(json, sizeof(json)) && json[0];
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "X-Content-Type-Options", "nosniff");
+    if (!ready) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_sendstr(req,
+            "{\"error\":\"device_not_ready\"}");
+    }
+    return httpd_resp_sendstr(req, json);
+}
+
+static esp_err_t api_info_get(httpd_req_t *req)
+{
+    return api_json_get(req, s_api_info_provider);
+}
+
+static esp_err_t api_status_get(httpd_req_t *req)
+{
+    return api_json_get(req, s_api_status_provider);
 }
 
 static esp_err_t dashboard_get(httpd_req_t *req)
@@ -667,10 +746,22 @@ static bool start_http_portal(void)
         .method = HTTP_POST,
         .handler = portal_save
     };
+    const httpd_uri_t api_info = {
+        .uri = "/api/v1/info",
+        .method = HTTP_GET,
+        .handler = api_info_get
+    };
+    const httpd_uri_t api_status = {
+        .uri = "/api/v1/status",
+        .method = HTTP_GET,
+        .handler = api_status_get
+    };
     if (httpd_register_uri_handler(s_httpd, &root) != ESP_OK ||
         httpd_register_uri_handler(s_httpd, &setup_page) != ESP_OK ||
         httpd_register_uri_handler(s_httpd, &status_page) != ESP_OK ||
-        httpd_register_uri_handler(s_httpd, &save) != ESP_OK) {
+        httpd_register_uri_handler(s_httpd, &save) != ESP_OK ||
+        httpd_register_uri_handler(s_httpd, &api_info) != ESP_OK ||
+        httpd_register_uri_handler(s_httpd, &api_status) != ESP_OK) {
         httpd_stop(s_httpd);
         s_httpd = NULL;
         return false;

@@ -5,7 +5,7 @@
 **Solo-Mining-Firmware für den Nerdminer V2 auf LilyGO T-Display S3.**
 Komplett neu gebaut auf nativem ESP-IDF 5.5, ohne Arduino-Unterbau.
 
-**~300 kH/s · 52 °C · 38 Host-Tests · Browser-Flasher**
+**~300 kH/s · 52 °C · 43 Host-Tests · Browser-Flasher**
 
 [**Gerät kaufen auf bitminer24.de →**](https://www.bitminer24.de)
 
@@ -18,6 +18,10 @@ Komplett neu gebaut auf nativem ESP-IDF 5.5, ohne Arduino-Unterbau.
 > **Aktueller Release:** Der BitMiner24-Web-Updater installiert standardmäßig
 > Version 2.0.0. Die unveränderte Originalversion 1.8.3 bleibt dort als
 > wählbarer Rückfallstand verfügbar.
+>
+> **App-Alpha:** Der Branch `app-api-v1` baut getrennt als
+> `2.1.0-app-alpha.1`. Er wird erst nach Hardware- und Recovery-Test in den
+> Web-Updater aufgenommen.
 
 ## Was das hier ist
 
@@ -36,7 +40,7 @@ gemessen statt geschätzt.
 | Hashrate | ~78 kH/s | **~300 kH/s** |
 | Temperatur | über 60 °C | **52 °C** |
 | Unterbau | Arduino, IDF 4.4, GCC 8.4 | ESP-IDF 5.5, GCC 14.2 |
-| Tests ohne Hardware | keine | **38** |
+| Tests ohne Hardware | keine | **43** |
 | Updates | nur manuell | BitMiner24-Web-Updater im Browser |
 | Korrektheit | ungeprüft | dreistufig verifiziert |
 
@@ -69,7 +73,9 @@ components/
   bm24_stratum/    JSON-RPC zum Pool
   bm24_miner/      HW- und SW-Worker, Share-Queue
   bm24_pool/       TCP/TLS, Reconnect, Share-Submit
-  bm24_network/    WLAN, Setup-Portal, Dashboard, Web-Updater-Link
+  bm24_api_v1/     getestete JSON-Verträge für die BitMiner24 App
+  bm24_identity/   stabile zufällige Geräte-ID für App und Cloud
+  bm24_network/    WLAN, App-API, mDNS, Setup-Portal, Dashboard
   bm24_display/    nativer I80/ST7789-Treiber
   bm24_metrics/    Marktdaten von mempool.space und CoinGecko
   bm24_ui/         fünf Seiten, Tastenauswertung
@@ -110,6 +116,9 @@ Was tatsächlich half:
 
 - **Web-Dashboard im Heimnetz.** Live-Werte im Browser, ohne Kabel, ohne
   aufs Display zu schauen. Schreibzugriffe sind passwortgeschützt.
+- **Lesende BitMiner24-App-API.** `/api/v1/info` und `/api/v1/status`
+  liefern versionierte Identität, Capabilities und Messwerte. mDNS kündigt
+  `_bitminer24._tcp` an; die App muss keine IP-Adresse mehr kennen.
 - **Firmware-Updates über den BitMiner24-Web-Updater.** In der lokalen
   Oberfläche gibt es keinen Datei-Upload und keinen `/ota`-Endpunkt.
 - **A/B-App-Layout mit Boot-Rollback**, damit ein nicht startendes
@@ -135,7 +144,8 @@ Aufgeschrieben, weil das Fundament sie jetzt hergibt:
   liegen derzeit im Klartext im Flash.
 - **Mehrere Pools mit automatischem Umschalten**, damit ein Pool-Ausfall
   das Gerät nicht stundenlang stillstehen lässt.
-- **Gerätename im Netz** statt IP-Adresse.
+- **Sicheres Geräte-Pairing für Schreibzugriffe**, bevor Pool- oder
+  Workeränderungen aus der App freigeschaltet werden.
 - **Freiwillige, anonyme Betriebsdaten**, damit sich Ausfälle über viele
   Geräte erkennen lassen statt aus einzelnen Support-Anfragen.
 - **Konsole über USB** für die Ferndiagnose, ohne eine Sonderfirmware zu
@@ -144,7 +154,7 @@ Aufgeschrieben, weil das Fundament sie jetzt hergibt:
 ## Mitmachen
 
 ```bash
-pio test -e native                                  # 38 Tests, ohne Hardware
+pio test -e native                                  # 43 Tests, ohne Hardware
 pio run -e bm24-v2                                  # Firmware bauen
 pio run -e bm24-v2 -t upload --upload-port <PORT>   # Port z. B. COM4
 BM24_PORT=<PORT> ./tools/measure.sh "Variante" 150  # bauen, flashen, messen

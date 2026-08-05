@@ -32,14 +32,20 @@ bool bm24_network_sync_time(uint32_t timeout_ms);
 bool bm24_network_open_portal(void);
 void bm24_network_get_status(bm24_network_status *out);
 
-#ifdef __cplusplus
-}
-#endif
-
 /* Der Statuslieferant fuellt JSON fuer das Web-Dashboard. Er wird von
    app_main gesetzt, damit das Netzwerkmodul nicht auf Miner, Pool und
    Metriken zugreifen muss und keine Abhaengigkeitsschleife entsteht. */
 typedef void (*bm24_status_provider)(char *json, size_t capacity);
 void bm24_network_set_status_provider(bm24_status_provider provider);
+
+/* API-v1-Lieferanten geben false zurueck, solange Identitaet oder Messwerte
+   noch nicht bereit sind. Der Webserver antwortet dann ehrlich mit 503. */
+typedef bool (*bm24_api_provider)(char *json, size_t capacity);
+void bm24_network_set_api_v1_providers(bm24_api_provider info_provider,
+                                       bm24_api_provider status_provider);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* BM24_NETWORK_H */

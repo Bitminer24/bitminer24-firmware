@@ -5,6 +5,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -18,8 +19,10 @@
 #include "esp_timer.h"
 #include "nvs_flash.h"
 
+#include "bm24_api_v1.h"
 #include "bm24_config.h"
 #include "bm24_display.h"
+#include "bm24_identity.h"
 #include "bm24_metrics.h"
 #include "bm24_miner.h"
 #include "bm24_sha_hw.h"
@@ -30,6 +33,7 @@
 static const char *TAG = "bm24";
 static temperature_sensor_handle_t s_temperature;
 static bool s_display_ready;
+static char s_device_id[BM24_DEVICE_ID_LENGTH + 1];
 
 static bool running_image_pending_verify(void)
 {
@@ -83,6 +87,8 @@ static struct {
     double khs;
     float temperature;
     uint64_t uptime;
+    bool ready;
+    bool temperature_valid;
 } s_live;
 
 /* Zaehler ueber Neustarts hinweg. Wird beim Start geladen, alle fuenf
@@ -101,7 +107,9 @@ static void dashboard_status(char *json, size_t capacity)
     bm24_pool_get_stats(&pool);
     bm24_metrics_get(&metrics);
 
-    double best = pool.best_difficulty;
+    double best = s_persisted.best_difficulty;
+    if (pool.best_difficulty > best)
+        best = pool.best_difficulty;
     if (metrics.pool_stats_valid && metrics.pool_best_difficulty > best)
         best = metrics.pool_best_difficulty;
 
@@ -122,6 +130,83 @@ static void dashboard_status(char *json, size_t capacity)
              pool.connected ? "true" : "false", uptime,
              (unsigned)(metrics.pool_stats_valid ? metrics.pool_workers : 1),
              app->version);
+}
+
+static bool api_v1_info(char *json, size_t capacity)
+{
+    if (!s_device_id[0])
+        return false;
+    bm24_api_v1_info info = {
+        .device_id = s_device_id,
+        .firmware_version = esp_app_get_description()->version,
+    };
+    return bm24_api_v1_format_info(&info, json, capacity);
+}
+
+static void json_timestamp(char out[24])
+{
+    time_t now;
+    time(&now);
+    if (now < 1704067200) {
+        strcpy(out, "null");
+        return;
+    }
+    struct tm utc;
+    gmtime_r(&now, &utc);
+    char timestamp[21];
+    if (strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc) == 0) {
+        strcpy(out, "null");
+        return;
+    }
+    snprintf(out, 24, "\"%s\"", timestamp);
+}
+
+static bool api_v1_status(char *json, size_t capacity)
+{
+    if (!s_device_id[0])
+        return false;
+
+    bm24_miner_stats miner;
+    bm24_pool_stats pool;
+    bm24_metrics_snapshot metrics;
+    bm24_miner_get_stats(&miner);
+    bm24_pool_get_stats(&pool);
+    bm24_metrics_get(&metrics);
+
+    double best = s_persisted.best_difficulty;
+    if (pool.best_difficulty > best)
+        best = pool.best_difficulty;
+    if (metrics.pool_stats_valid && metrics.pool_best_difficulty > best)
+        best = metrics.pool_best_difficulty;
+
+    const char *state = (!miner.hw_trusted || miner.mismatches)
+        ? "error"
+        : (pool.connected && miner.active ? "online" : "degraded");
+    char observed_at[24];
+    json_timestamp(observed_at);
+    const char *last_activity =
+        (pool.connected && miner.active) ? observed_at : "null";
+
+    bm24_api_v1_status status = {
+        .device_id = s_device_id,
+        .observed_at_json = observed_at,
+        .status = state,
+        .hashrate_available = s_live.ready,
+        .hashrate_hps = s_live.khs * 1000.0,
+        .temperature_available = s_live.temperature_valid,
+        .temperature_c = s_live.temperature,
+        /* Nur Accepted wird bootuebergreifend gespeichert. Ein Submit-Wert
+           aus der aktuellen Sitzung waere daneben semantisch irrefuehrend. */
+        .shares_submitted_available = false,
+        .shares_accepted_available = true,
+        .shares_accepted = s_persisted.accepted,
+        .best_difficulty = best,
+        .blocks_found = s_persisted.found_blocks,
+        .pool_connected = pool.connected,
+        .uptime_s = s_live.uptime,
+        .last_activity_at_json = last_activity,
+    };
+    return bm24_api_v1_format_status(&status, json, capacity);
 }
 
 static void supervisor_task(void *arg)
@@ -156,9 +241,11 @@ static void supervisor_task(void *arg)
         last_sw = miner.sw_hashes;
 
         float temperature = 0.0f;
+        bool temperature_valid = false;
         if (s_temperature &&
             temperature_sensor_get_celsius(s_temperature, &temperature) ==
                 ESP_OK) {
+            temperature_valid = true;
             uint8_t duty = smart_sw_duty(
                 temperature, miner.sw_duty_percent);
             if (duty != miner.sw_duty_percent)
@@ -235,6 +322,8 @@ static void supervisor_task(void *arg)
         s_live.khs = (hw_rate + sw_rate) / 1000.0;
         s_live.temperature = temperature;
         s_live.uptime = (uint64_t)(esp_timer_get_time() / 1000000);
+        s_live.temperature_valid = temperature_valid;
+        s_live.ready = true;
 
         bm24_ui_state ui = {
             .hw_khs = hw_rate / 1000.0,
@@ -278,6 +367,8 @@ void app_main(void)
     }
     if (nvs != ESP_OK)
         fatal_boot("NVS INIT", pending_verify);
+    if (!bm24_identity_get(s_device_id))
+        fatal_boot("GERAETE-ID", pending_verify);
 
     /* Der Aufbau steht jetzt in app_main, bevor irgendein Task startet.
        Vorher richtete ihn der Supervisor selbst ein, und der Metrik-Task
@@ -321,13 +412,24 @@ void app_main(void)
         bm24_config_defaults(&config);
     }
 
+    /* Identitaet und persistente Werte muessen vor dem ersten HTTP-Request
+       bereit sein. Provider werden vor dem WLAN-Start registriert, damit es
+       zwischen mDNS-Ankuendigung und API keine kurze 503-Luecke gibt. */
+    bm24_stats_load(&s_persisted);
+    s_persisted.restarts++;
+    s_accepted_base = s_persisted.accepted;
+    s_found_blocks_base = s_persisted.found_blocks;
+    ESP_LOGI(TAG, "Start %u, Gesamtlaufzeit bisher %" PRIu64 " s",
+             (unsigned)s_persisted.restarts, s_persisted.total_seconds);
+    bm24_network_set_status_provider(dashboard_status);
+    bm24_network_set_api_v1_providers(api_v1_info, api_v1_status);
+
     bool connected = bm24_network_start(
         provisioned ? &config : NULL, provisioned ? 20000 : 0);
     bm24_network_status network;
     bm24_network_get_status(&network);
     if (!connected && !network.portal_active)
         fatal_boot("WLAN/SETUP INIT", pending_verify);
-    bm24_network_set_status_provider(dashboard_status);
     if (!bm24_ui_start())
         fatal_boot("UI TASK", pending_verify);
 
@@ -342,13 +444,6 @@ void app_main(void)
 
     /* Pool-seitige Statistik braucht Host und Adresse; sie zeigt auch
        weitere Miner auf derselben Adresse und die Bestmarke des Pools. */
-    bm24_stats_load(&s_persisted);
-    s_persisted.restarts++;
-    s_accepted_base = s_persisted.accepted;
-    s_found_blocks_base = s_persisted.found_blocks;
-    ESP_LOGI(TAG, "Start %u, Gesamtlaufzeit bisher %" PRIu64 " s",
-             (unsigned)s_persisted.restarts, s_persisted.total_seconds);
-
     bm24_metrics_set_pool(config.pool_host, config.worker);
     bm24_metrics_set_timezone(config.timezone_offset);
     bm24_display_apply_settings(config.brightness, config.invert_colors);
