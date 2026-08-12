@@ -105,6 +105,41 @@ bool bm24_config_is_provisioned(const bm24_config *config)
     return bm24_config_validate(config) == BM24_CONFIG_OK;
 }
 
+/* Kopiert value nach out, ohne umgebende Leerzeichen. Passt der Rest nicht
+   in die Kapazitaet, gilt die Eingabe als unbrauchbar: lieber gar nichts
+   uebernehmen als eine stillschweigend abgeschnittene SSID, mit der sich
+   das Geraet nie verbinden wird. */
+static bool copy_trimmed(const char *value, char *out, size_t capacity)
+{
+    if (!out || capacity == 0)
+        return false;
+    out[0] = '\0';
+    if (!value)
+        return false;
+
+    const char *start = value;
+    while (*start == ' ' || *start == '\t')
+        ++start;
+    const char *end = start + strlen(start);
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t'))
+        --end;
+
+    size_t n = (size_t)(end - start);
+    if (n == 0 || n >= capacity)
+        return false;
+    memcpy(out, start, n);
+    out[n] = '\0';
+    return true;
+}
+
+bool bm24_config_pick_ssid(const char *from_list, const char *typed,
+                           char *out, size_t capacity)
+{
+    if (copy_trimmed(typed, out, capacity))
+        return true;
+    return copy_trimmed(from_list, out, capacity);
+}
+
 #ifdef ESP_PLATFORM
 
 bm24_config_status bm24_config_load(bm24_config *config)

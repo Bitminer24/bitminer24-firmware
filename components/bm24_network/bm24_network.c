@@ -102,11 +102,23 @@ static const char PORTAL_HEAD[] =
     "<span class=step-no>01</span><div><h2>WLAN verbinden</h2>"
     "<p>Wähle dein 2,4-GHz-Heimnetz aus.</p></div></div><div class=fields>"
     "<label class=\"field full\"><span class=label>WLAN-Netzwerk</span>"
-    "<select name=ssid required>";
+    "<select name=ssid>";
 
+/* Kein "required" an der Auswahlliste, und darunter ein Feld zum
+   Selbsttippen. Grund: Schlaegt der Funkscan fehl, enthaelt die Liste
+   keinen brauchbaren Eintrag. Mit "required" liess sich das Formular dann
+   ueberhaupt nicht mehr absenden und die Einrichtung war blockiert — genau
+   der Fall, den ein Kunde am 07.08.2026 gemeldet hat. */
 static const char PORTAL_TAIL_BEFORE_PASSWORD[] =
-    "</select><span class=hint>Die Liste wurde direkt vom Nerdminer gescannt.</span>"
-    "</label><label class=\"field full\"><span class=label>WLAN-Passwort</span>"
+    "</select><span class=hint>Die Liste wurde direkt vom Nerdminer gescannt. "
+    "Steht dein Netz nicht dabei, trage es im naechsten Feld ein.</span>"
+    "</label>"
+    "<label class=\"field full\"><span class=label>WLAN-Name selbst eintragen</span>"
+    "<input name=ssid_manual maxlength=32 spellcheck=false autocapitalize=off "
+    "autocorrect=off placeholder=\"nur noetig, wenn die Liste leer bleibt\">"
+    "<span class=hint>Gross- und Kleinschreibung genau wie am Router. Ist hier "
+    "etwas eingetragen, gilt dieser Name.</span></label>"
+    "<label class=\"field full\"><span class=label>WLAN-Passwort</span>"
     "<input name=wifi_password type=password maxlength=64 autocomplete=current-password "
     "placeholder=\"Passwort des Heimnetzes\"><span class=hint>Nur bei einem offenen "
     "WLAN leer lassen.</span></label></div></section>"
@@ -313,17 +325,36 @@ static void html_escape(const char *in, char *out, size_t capacity)
 }
 
 /* Umgebende Netze auflisten. Laeuft im APSTA-Modus, damit das Setup-WLAN
-   waehrend des Scans erreichbar bleibt. */
+   waehrend des Scans erreichbar bleibt.
+
+   Der Moduswechsel von AP auf APSTA braucht einen Moment. Frueher startete
+   der Scan unmittelbar danach und schlug beim ersten Aufruf der Seite fehl;
+   der Anwender sah nur "Scan fehlgeschlagen" und kam nicht weiter. Jetzt
+   bekommt der Wechsel Zeit, und ein fehlgeschlagener Versuch wird einmal
+   wiederholt. Bleibt es dabei, ist das nicht mehr schlimm: die SSID laesst
+   sich im Formular auch von Hand eintragen. */
 static esp_err_t send_scan_options(httpd_req_t *req)
 {
     wifi_mode_t mode;
-    if (esp_wifi_get_mode(&mode) == ESP_OK && mode == WIFI_MODE_AP)
+    if (esp_wifi_get_mode(&mode) == ESP_OK && mode == WIFI_MODE_AP) {
         esp_wifi_set_mode(WIFI_MODE_APSTA);
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
 
     wifi_scan_config_t scan = { .show_hidden = false };
-    if (esp_wifi_scan_start(&scan, true) != ESP_OK)
+    esp_err_t started = esp_wifi_scan_start(&scan, true);
+    if (started != ESP_OK) {
+        /* Ein laufender Scan aus einem frueheren Seitenaufruf blockiert den
+           neuen. Abraeumen, kurz durchatmen, ein zweiter Versuch. */
+        esp_wifi_scan_stop();
+        vTaskDelay(pdMS_TO_TICKS(500));
+        started = esp_wifi_scan_start(&scan, true);
+    }
+    if (started != ESP_OK) {
+        ESP_LOGW(TAG, "WLAN-Suche fehlgeschlagen: %s", esp_err_to_name(started));
         return httpd_resp_sendstr_chunk(req,
-            "<option value=\"\">Scan fehlgeschlagen</option>");
+            "<option value=\"\">Suche fehlgeschlagen, bitte unten eintragen</option>");
+    }
 
     uint16_t found = 0;
     esp_wifi_scan_get_ap_num(&found);
@@ -349,7 +380,7 @@ static esp_err_t send_scan_options(httpd_req_t *req)
     free(records);
     if (!found)
         httpd_resp_sendstr_chunk(req,
-            "<option value=\"\">Kein WLAN gefunden</option>");
+            "<option value=\"\">Kein WLAN gefunden, bitte unten eintragen</option>");
     return ESP_OK;
 }
 
@@ -577,9 +608,18 @@ static esp_err_t portal_save(httpd_req_t *req)
     bm24_config_defaults(&config);
     char port_text[8];
     char tls_text[4];
+
+    /* Zwei Wege zur SSID: Auswahlliste oder selbst getippt. Welcher gilt,
+       entscheidet bm24_config_pick_ssid, damit die Regel an einer Stelle
+       steht und ohne Hardware pruefbar bleibt. */
+    char ssid_from_list[BM24_WIFI_SSID_MAX + 1] = {0};
+    char ssid_typed[BM24_WIFI_SSID_MAX + 1] = {0};
+    form_value(form, "ssid", ssid_from_list, sizeof(ssid_from_list));
+    form_value(form, "ssid_manual", ssid_typed, sizeof(ssid_typed));
+
     bool decoded =
-        form_value(form, "ssid", config.wifi_ssid,
-                   sizeof(config.wifi_ssid)) &&
+        bm24_config_pick_ssid(ssid_from_list, ssid_typed, config.wifi_ssid,
+                              sizeof(config.wifi_ssid)) &&
         form_value(form, "wifi_password", config.wifi_password,
                    sizeof(config.wifi_password)) &&
         form_value(form, "worker", config.worker, sizeof(config.worker)) &&

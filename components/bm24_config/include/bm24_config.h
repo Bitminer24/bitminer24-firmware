@@ -68,6 +68,22 @@ void bm24_config_defaults(bm24_config *config);
 bm24_config_status bm24_config_validate(const bm24_config *config);
 bool bm24_config_is_provisioned(const bm24_config *config);
 
+/* Entscheidet, welcher der beiden Eingabewege des Setup-Formulars gilt:
+   die Auswahlliste aus dem Funkscan oder das Feld zum Selbsttippen.
+
+   Hintergrund: Bei einem Kunden schlug der Scan fehl. Weil es damals nur
+   die Auswahlliste gab, kam er ueberhaupt nicht mehr weiter und haette
+   auf die alte Firmware zurueckgehen muessen. Ein fehlgeschlagener Scan
+   darf niemanden aussperren, deshalb gibt es jetzt beide Wege.
+
+   Getipptes gewinnt: wer trotz Liste selbst schreibt, meint es so.
+   Umgebende Leerzeichen fallen weg, sonst scheitert die Verbindung
+   spaeter an etwas, das man auf dem Bildschirm nicht sieht.
+
+   Rueckgabe: false, wenn beide Wege leer bleiben; out ist dann "". */
+bool bm24_config_pick_ssid(const char *from_list, const char *typed,
+                           char *out, size_t capacity);
+
 /* Auf dem ESP32 liegt die Konfiguration als einzelner versionierter NVS-Blob.
    Host-Builds liefern BM24_CONFIG_STORAGE_ERROR und testen nur die reine
    Validierung. */
